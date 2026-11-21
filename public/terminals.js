@@ -275,6 +275,27 @@ function tabKeys(event, id) {
   target.focus();
 }
 
+/**
+ * Asks the sidebar to reveal terminal `id`'s place in its tree (features/workspaces.js revealPlace).
+ * Only a click on its tab or a press on a grid tile that changes the active terminal asks for it;
+ * activateTerminal never does, so a new terminal, a restore or a keyboard shortcut leave the tree be.
+ */
+function revealTerminal(id) {
+  const info = terminals.get(id)?.info;
+  if (info) emit('reveal', { workspaceId: info.workspaceId, rel: info.rel ?? '' });
+}
+
+/**
+ * A press in a grid tile activates its terminal without focusing it (xterm takes the click). It
+ * reveals the terminal's place only when it makes a different terminal active, so clicking into the
+ * active tile to type leaves the tree as it is; a press on its × closes it instead.
+ */
+function pressTile(id, event) {
+  const switching = id !== activeId && !event.target.closest?.('.close');
+  activateTerminal(id, false);
+  if (switching) revealTerminal(id);
+}
+
 function mountTerminal(info) {
   const closeButton = () => el('button', { class: 'close', title: t('term.close'), 'aria-label': t('term.close'), onclick: (e) => { e.stopPropagation(); closeTerminal(info.id); } }, icon('close'));
   // The role=tab holds the glyph, the agent, the title and the kind; its × sits beside it in the wrapper,
@@ -293,10 +314,12 @@ function mountTerminal(info) {
     tabItem,
     closeButton(),
   );
+  // A tab click also reveals the terminal's place in the sidebar tree (revealTerminal).
+  tab.addEventListener('click', () => revealTerminal(info.id));
   const body = el('div', { class: 'pane-body' });
   const pane = el(
     'div',
-    { class: 'pane', 'data-terminal-id': info.id, id: `term-pane-${info.id}`, onmousedown: () => activateTerminal(info.id, false), translate: 'no' },
+    { class: 'pane', 'data-terminal-id': info.id, id: `term-pane-${info.id}`, onmousedown: (event) => pressTile(info.id, event), translate: 'no' },
     el('div', { class: 'pane-head' }, grip(), el('span', { class: 'st', hidden: true }), el('span', { class: 'kind' }), el('span', { class: 'pane-title' }, info.title), el('span', { class: 'cwd', title: info.cwd }, placeLabel(info)), closeButton()),
     body,
   );

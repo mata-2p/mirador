@@ -3,6 +3,12 @@
 All notable changes to Mirador, written for the people who run it. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+
+- Clicking a terminal's tab, or a grid tile that makes another terminal active, opens its workspace and folders down to its project in the sidebar tree and collapses the rest, without changing the layout Mirador saves.
+
 ## [0.1.0] - 2026-11-20
 
 The first public version: a local dashboard on `127.0.0.1` for your project folders, with agent terminals inside it.

@@ -37,6 +37,7 @@ import { NAME_MIN_PX, inlineActionCount, nameMinimum, showsMore } from '/feature
 import { ICONS, folderKey, sidebarStatus } from '/features/sidebar-status-model.js';
 import { loadAgents, pickerAgents } from '/features/agent-picker.js';
 import { menuItems, normalizeSelection, pick, toggleState, treeView } from '/features/state-filter-model.js';
+import { revealPlan } from '/features/tree-reveal-model.js';
 import { sleepingAgents } from '/features/sleeping.js';
 import { activateTerminal, activePlace, activeTerminalId, newTerminalSize, openTerminal, setStateFilter, showOpenedTerminals, terminalList } from '/terminals.js';
 import { openGitPanel } from '/git-panel.js';
@@ -221,6 +222,67 @@ function markActive() {
   slot('workspaces')?.querySelectorAll('.row').forEach((row) => {
     row.classList.toggle('has-active', sameFolder(active, { ws: row.dataset.ws, rel: row.dataset.rel }));
   });
+}
+
+/* ---------- Revealing the active terminal's place ---------- */
+
+// Each tree row's caret, for the reveal: `open()` says whether its children show, and `show(next)`
+// opens or closes them without saving it, resolving once its subfolders loaded. A redraw drops the
+// old rows, and their entries with them.
+const rowToggles = new WeakMap();
+let revealRun = 0;
+
+/** The tree as revealPlan reads it: each workspace group and each folder row drawn, with whether it is open. */
+function treeShown() {
+  const groups = [];
+  const folders = [];
+  for (const row of slot('workspaces')?.querySelectorAll('.row') ?? []) {
+    const toggles = rowToggles.get(row);
+    if (!toggles) continue;
+    if (row.classList.contains('ws-row')) groups.push({ ws: row.dataset.ws, open: toggles.open() });
+    else folders.push({ ws: row.dataset.ws, rel: row.dataset.rel, open: toggles.open() });
+  }
+  return { groups, folders };
+}
+
+/** The row of folder `rel` of workspace `ws` ('' for the workspace row), when the tree draws it. */
+function treeRow(ws, rel) {
+  return [...(slot('workspaces')?.querySelectorAll('.row') ?? [])].find((row) => row.dataset.ws === ws && row.dataset.rel === rel) ?? null;
+}
+
+/** Closes the other workspace groups and the open folders off `place`'s path (revealPlan), without saving it. */
+function collapseOffPath(place) {
+  const plan = revealPlan(place, treeShown());
+  for (const ws of plan.closeGroups) rowToggles.get(treeRow(ws, ''))?.show(false);
+  for (const folder of plan.closeFolders) rowToggles.get(treeRow(folder.ws, folder.rel))?.show(false);
+}
+
+/**
+ * Reveals `place` ({ workspaceId, rel }), which terminals.js sends on a tab click or a press on a
+ * grid tile that changed the active terminal: opens its workspace, then each folder down to its
+ * project in order, waiting for each level to load, closes everything else and scrolls the deepest
+ * row it reached into view. Only what is shown changes: the saved collapsed workspaces and expanded
+ * folders stay, so a reload brings back the user's own layout.
+ */
+async function revealPlace(place) {
+  const run = ++revealRun;
+  const plan = revealPlan(place, treeShown());
+  if (!plan.openGroup) return;
+  collapseOffPath(place);
+  const rows = [treeRow(plan.openGroup, '')];
+  await rowToggles.get(rows[0])?.show(true);
+  for (const rel of plan.openFolders) {
+    if (run !== revealRun) return;
+    const row = treeRow(plan.openGroup, rel);
+    if (!row) continue;
+    rows.push(row);
+    await rowToggles.get(row)?.show(true);
+  }
+  if (run !== revealRun) return;
+  // Folders the saved layout opened as their parents loaded are off the path too.
+  collapseOffPath(place);
+  markActive();
+  rows.at(-1)?.scrollIntoView({ block: 'nearest' });
 }
 
 /* ---------- State filter ---------- */
@@ -658,6 +720,8 @@ function folderRow(workspaceId, node, depth) {
   );
   actionStops(row, false);
   fitOnShow(row);
+  // The subfolders' first load, which an opening waits for: the reveal looks for the next level in it.
+  let loading = null;
 
   async function toggle(open, remember = true) {
     if (!node.hasChildren) return;
@@ -671,9 +735,12 @@ function folderRow(workspaceId, node, depth) {
     if (remember) rememberExpanded(workspaceId, node.rel, willOpen);
     if (willOpen && !children.dataset.loaded) {
       children.dataset.loaded = '1';
-      await renderFolders(children, workspaceId, node.rel, depth + 1);
+      loading = renderFolders(children, workspaceId, node.rel, depth + 1);
     }
+    if (willOpen) await loading;
   }
+
+  rowToggles.set(row, { open: () => !children.hidden, show: (next) => toggle(next, false) });
 
   caret.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
   row.addEventListener('click', () => select(folder));
@@ -755,8 +822,10 @@ function workspaceGroup(workspace) {
   row.querySelector('.row-actions').append(moreMenu(workspace, extra));
   actionStops(row, false);
   fitOnShow(row);
+  // The first-level folders' first load, which an opening hands back for the reveal to wait for.
+  let loading = null;
 
-  function toggle(next) {
+  function toggle(next, remember = true) {
     const willOpen = next ?? children.hidden;
     children.hidden = !willOpen;
     caret.replaceChildren(caretIcon(willOpen));
@@ -764,14 +833,19 @@ function workspaceGroup(workspace) {
     row.setAttribute('aria-expanded', String(willOpen));
     rovingStop();
     if (willOpen) fitShownRows();
-    if (willOpen) collapsed.delete(workspace.id);
-    else collapsed.add(workspace.id);
-    prefs.write('collapsedWorkspaces', [...collapsed]);
+    if (remember) {
+      if (willOpen) collapsed.delete(workspace.id);
+      else collapsed.add(workspace.id);
+      prefs.write('collapsedWorkspaces', [...collapsed]);
+    }
     if (willOpen && !children.dataset.loaded) {
       children.dataset.loaded = '1';
-      renderFolders(children, workspace.id, '', 1, showCount);
+      loading = renderFolders(children, workspace.id, '', 1, showCount);
     }
+    return willOpen ? loading : null;
   }
+
+  rowToggles.set(row, { open: () => !children.hidden, show: (next) => toggle(next, false) });
 
   caret.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
   row.addEventListener('click', () => select(folder));
@@ -785,7 +859,7 @@ function workspaceGroup(workspace) {
   });
   if (open) {
     children.dataset.loaded = '1';
-    renderFolders(children, workspace.id, '', 1, showCount);
+    loading = renderFolders(children, workspace.id, '', 1, showCount);
   }
   return el('div', { class: picking.has(workspace.id) ? 'ws picking' : 'ws', 'data-ws': workspace.id }, row, pickBar(workspace), children);
 }
@@ -1472,6 +1546,8 @@ export async function init() {
     if (row && !row.contains(e.relatedTarget)) actionStops(row, false);
   });
   on('terminals', refreshStatus);
+  // A tab click or a press on another grid tile (terminals.js revealTerminal) opens its place in the tree.
+  on('reveal', revealPlace);
   // The active terminal's folder stays under the filter; the one active before may now hide.
   on('activate', () => {
     markActive();
