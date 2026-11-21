@@ -65,7 +65,7 @@ export default {
     'help.panel.filter.title': 'Filter by state',
     'help.panel.filter.text': 'The funnel next to “Workspaces” keeps only the states you pick in the tree and in the terminals. “Show all” brings everything back.',
     'help.panel.layout.title': 'Tabs and grid',
-    'help.panel.layout.text': 'One terminal at a time or several side by side. You change it in Settings.',
+    'help.panel.layout.text': 'One terminal at a time or several side by side. You change it in Settings. A path to a file of the workspace in a terminal is a link: click it to open the file in the editor.',
     'help.panel.noMemory.title': 'Folder without memory',
     'help.panel.noMemory.text': 'It has no saved memory yet: the agent starts with no previous context.',
 
@@ -147,7 +147,7 @@ export default {
     'help.panel.filter.title': 'Filtro por estado',
     'help.panel.filter.text': 'El embudo junto a «Workspaces» deja solo los estados que elijas en el árbol y en las terminales. «Ver todos» trae todo de vuelta.',
     'help.panel.layout.title': 'Pestañas y cuadrícula',
-    'help.panel.layout.text': 'Una terminal a la vez o varias lado a lado. Lo cambias en Ajustes.',
+    'help.panel.layout.text': 'Una terminal a la vez o varias lado a lado. Lo cambias en Ajustes. La ruta de un archivo del workspace en una terminal es un enlace: haz clic para abrir el archivo en el editor.',
     'help.panel.noMemory.title': 'Carpeta sin memoria',
     'help.panel.noMemory.text': 'Todavía no tiene memoria guardada: el agente empieza sin contexto previo.',
 

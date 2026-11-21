@@ -6,6 +6,8 @@
 // the active terminal, the tabs layout shows the first one it keeps without activating it.
 // An agent's tab shows its agent's icon before its title (icons/agents.js tabAgent), so a
 // gentle-shell tab and a Claude Code one tell apart at a glance; its tooltip names the agent.
+// A path in a terminal's output that names an existing file of its workspace is a link that opens
+// the file editor (fileLinks, file-links-model.js); WebLinksAddon keeps the http(s) links.
 import { Terminal } from '/vendor/xterm.mjs';
 import { FitAddon } from '/vendor/addon-fit.mjs';
 import { WebLinksAddon } from '/vendor/addon-web-links.mjs';
@@ -23,6 +25,7 @@ import { returningSizes } from '/terminal-size.js';
 import { paneStatus } from '/pane-status-model.js';
 import { showsAsTab } from '/terminal-kind-model.js';
 import { matches, normalizeSelection, paneToShow, showsTerminal } from '/features/state-filter-model.js';
+import { fileChecker, findFileLinks, linkRange, splitPath } from '/features/file-links-model.js';
 
 const terminals = new Map();
 const INPUT_CHUNK = 64 * 1024;
@@ -63,6 +66,9 @@ let shownId = null;
 // The offered agents (GET /api/agents, read by initTerminals): the configured agent's catalog id
 // and the chosen agents' labels, which the agent tabs show (tabAgent).
 let offeredAgents = [];
+// Whether a path in a terminal's output names a file: GET /api/files lists its folder, cached
+// (fileChecker), so hovering the same line again asks nothing new.
+const fileExists = fileChecker(async (ws, rel) => (await api('GET', `/api/files?${new URLSearchParams({ ws, rel })}`)).files.map((file) => file.name));
 
 // ANSI colors stay the same in every theme: the terminal is a dark well (styles.css --well*).
 const XTERM_ANSI = {
@@ -344,6 +350,7 @@ export function connectTerminal(info, pane, body, hooks) {
   term.open(body);
 
   const record = { info, term, fit, pane, ws: null };
+  term.loadAddon(fileLinks(record, body));
   hooks.created?.(record);
   hooks.status?.(record);
 
@@ -402,6 +409,80 @@ export function connectTerminal(info, pane, body, hooks) {
     }
   });
   return record;
+}
+
+/* ---------- File links ---------- */
+
+/**
+ * Buffer row `row` (0-based) with the rows it wraps into, as one text: `text`, and `cells`, each
+ * character's cell { x, y, width } (1-based) for linkRange. The second cell of a wide character has
+ * no character of its own.
+ */
+function wrappedLine(buffer, row) {
+  let first = row;
+  while (first > 0 && buffer.getLine(first)?.isWrapped) first -= 1;
+  let last = row;
+  while (buffer.getLine(last + 1)?.isWrapped) last += 1;
+  let text = '';
+  const cells = [];
+  for (let y = first; y <= last; y += 1) {
+    const line = buffer.getLine(y);
+    for (let x = 0; line && x < line.length; x += 1) {
+      const cell = line.getCell(x);
+      const width = cell?.getWidth() ?? 1;
+      if (width === 0) continue;
+      const chars = cell?.getChars() || ' ';
+      for (let i = 0; i < chars.length; i += 1) cells.push({ x: x + 1, y: y + 1, width });
+      text += chars;
+    }
+  }
+  return { text, cells };
+}
+
+/** The xterm link for `found` (a findFileLinks candidate): a click opens its folder's editor on the file. */
+function fileLink(record, body, found, range, text) {
+  const { info } = record;
+  const { dir, name } = splitPath(found.path);
+  return {
+    range,
+    text,
+    activate: () => emit('files:open', { ws: info.workspaceId, rel: dir, path: name }),
+    hover: () => {
+      body.title = t('term.fileLink', { path: found.path });
+    },
+    leave: () => body.removeAttribute('title'),
+  };
+}
+
+/**
+ * xterm's provideLinks for buffer line `line` (1-based): the paths findFileLinks reads in it (with
+ * the rows it wraps into), given to xterm only once fileExists says each names a file.
+ */
+function provideFileLinks(record, body, line, callback) {
+  const { info, term } = record;
+  const workspace = workspaceById(info.workspaceId);
+  if (!workspace) return callback(undefined);
+  const { text, cells } = wrappedLine(term.buffer.active, line - 1);
+  const found = findFileLinks(text, { root: workspace.root, rel: info.rel ?? '', cwd: info.cwd });
+  if (!found.length) return callback(undefined);
+  Promise.all(found.map((link) => fileExists(info.workspaceId, link.path))).then((exists) => {
+    const links = found.filter((link, index) => exists[index]).map((link) => fileLink(record, body, link, linkRange(cells, link.start, link.end), text.slice(link.start, link.end)));
+    callback(links.length ? links : undefined);
+  });
+}
+
+/** An xterm addon that links the file paths of the terminal `record` shows in `body`. */
+function fileLinks(record, body) {
+  let provider = null;
+  return {
+    activate(term) {
+      provider = term.registerLinkProvider({ provideLinks: (line, callback) => provideFileLinks(record, body, line, callback) });
+    },
+    dispose() {
+      provider?.dispose();
+      provider = null;
+    },
+  };
 }
 
 /* ---------- Reordering ---------- */

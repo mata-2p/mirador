@@ -3,6 +3,13 @@
 All notable changes to Mirador, written for the people who run it. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+
+- A file path in a terminal's output that names a file of its workspace (absolute, `./x`, `../x` or `a/b.ts`, with
+  an optional `:line` or `:line:col`) is a link: a click opens the file in the file editor.
+
 ## [0.1.0] - 2026-11-20
 
 The first public version: a local dashboard on `127.0.0.1` for your project folders, with agent terminals inside it.
