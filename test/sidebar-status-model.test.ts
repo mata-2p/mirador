@@ -17,6 +17,20 @@ test('S3: an agent works while it runs and the inbox says nothing, waits or is d
   assert.equal(terminalState(agent('a', 'x'), finished('a')), 'done');
 });
 
+// #12: once an agent's card leaves the inbox, the sidebar, tab and pane showed it working again while
+// the server still reported error or finished. The server's agentState is the fallback for that case.
+test('#12: with no card, the server\'s agentState decides instead of working', () => {
+  assert.equal(terminalState(agent('a', 'x', { agentState: 'error' }), undefined), 'err');
+  assert.equal(terminalState(agent('a', 'x', { agentState: 'finished' }), undefined), 'done');
+  assert.equal(terminalState(agent('a', 'x', { agentState: 'waiting' }), undefined), 'wait');
+  assert.equal(terminalState(agent('a', 'x', { agentState: 'working' }), undefined), 'work');
+  // unknown, absent or an older server: working, exactly as before.
+  assert.equal(terminalState(agent('a', 'x', { agentState: 'unknown' }), undefined), 'work');
+  assert.equal(terminalState(agent('a', 'x'), undefined), 'work');
+  // A card still wins: it is the fresher word on what the agent needs.
+  assert.equal(terminalState(agent('a', 'x', { agentState: 'error' }), waiting('a')), 'wait');
+});
+
 test('S3: an ended agent is an error only when it did not end cleanly; a shell has no state', () => {
   assert.equal(terminalState(agent('a', 'x', { status: 'exited', exitCode: 1 }), undefined), 'err');
   assert.equal(terminalState(agent('a', 'x', { status: 'exited', exitCode: 0, oomKilled: true }), undefined), 'err');
@@ -92,10 +106,12 @@ test('S3: inbox items of terminals this window does not show are ignored', () =>
   assert.deepEqual(status.counts, { ...none, work: 1 });
 });
 
-// The sidebar's TerminalInfo is the one loaded with the page, so its agentState can be stale;
-// the sidebar, tabs and panes go on reading only the inbox (separate issue).
-test('the sidebar ignores the agentState a terminal was loaded with', () => {
-  assert.equal(terminalState(agent('a', 'x', { agentState: 'error' }), undefined), 'work');
-  assert.equal(terminalState(agent('a', 'x', { agentState: 'finished' }), undefined), 'work');
-  assert.deepEqual(sidebarStatus({ terminals: [agent('a', 'x', { agentState: 'error' })] }).counts, { work: 1, wait: 0, done: 0, sleep: 0, err: 0 });
+// The TerminalInfo loaded with the page used to carry the only agentState there was, and it went
+// stale, so the sidebar read only the inbox. Since #12 the stream refreshes the states
+// (public/terminals.js merges inboxAgentStates into terminalList), and an agent whose card left the
+// inbox keeps showing finished or in error instead of flipping back to working.
+test('#12: the agentState a terminal carries is read when no card says otherwise', () => {
+  assert.equal(terminalState(agent('a', 'x', { agentState: 'error' }), undefined), 'err');
+  assert.equal(terminalState(agent('a', 'x', { agentState: 'finished' }), undefined), 'done');
+  assert.deepEqual(sidebarStatus({ terminals: [agent('a', 'x', { agentState: 'error' })] }).counts, { work: 0, wait: 0, done: 0, sleep: 0, err: 1 });
 });

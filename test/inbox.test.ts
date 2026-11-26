@@ -103,6 +103,36 @@ async function openStream(token: string) {
         buffer += value;
       }
     },
+    /** The agent states of the next message whose map satisfies `until` (#12). */
+    /** The items of the next message whose list satisfies `until` (#12: a message may carry only states). */
+    async nextMatching(until: (list: Item[]) => boolean): Promise<Item[]> {
+      for (;;) {
+        const end = buffer.indexOf('\n');
+        if (end >= 0) {
+          const line = JSON.parse(buffer.slice(0, end));
+          buffer = buffer.slice(end + 1);
+          if (Array.isArray(line.items) && until(line.items)) return line.items;
+          continue;
+        }
+        const { value, done } = await reader.read();
+        if (done) throw new Error('stream ended');
+        buffer += value;
+      }
+    },
+    async nextState(until: (states: Record<string, string>) => boolean): Promise<Record<string, string>> {
+      for (;;) {
+        const end = buffer.indexOf('\n');
+        if (end >= 0) {
+          const line = JSON.parse(buffer.slice(0, end));
+          buffer = buffer.slice(end + 1);
+          if (line.agentStates && until(line.agentStates)) return line.agentStates;
+          continue;
+        }
+        const { value, done } = await reader.read();
+        if (done) throw new Error('stream ended');
+        buffer += value;
+      }
+    },
     close: () => controller.abort(),
   };
 }
@@ -181,14 +211,33 @@ test('an agent that reports a blocker through the shim shows in the inbox until 
   assert.deepEqual(await items(token), []);
 });
 
+// #12: the sidebar, tabs and panes read the state of an agent that has no card, so every stream
+// message carries the states of the terminals the store follows, keyed by id.
+test('every stream message carries the agent states by terminal id (#12)', async () => {
+  const token = await login();
+  const stream = await openStream(token);
+  try {
+    // The opening message states what the store follows right now, ready for a card to leave.
+    const states = await stream.nextState(() => true);
+    assert.equal(typeof states, 'object');
+    for (const [id, state] of Object.entries(states)) {
+      assert.equal(typeof id, 'string');
+      assert.ok(['working', 'waiting', 'finished', 'error', 'unknown'].includes(state), `${id}: ${state}`);
+    }
+  } finally {
+    stream.close();
+  }
+});
+
 test('the stream sends the current inbox, then every change, without polling', async () => {
   const token = await login();
   const stream = await openStream(token);
   try {
     assert.deepEqual(await stream.next(), []);
     const id = await openTerminal(token, 'alpha', 'agent');
-    const pushed = await stream.next();
-    assert.deepEqual(pushed.map((i) => [i.terminalId, i.rel, i.label]), [[id, 'alpha', 'Guarded command confirmation']]);
+    // A message may carry only an agent state (#12); the card's message is the one with items.
+    const carried = await stream.nextMatching((list) => list.length > 0);
+    assert.deepEqual(carried.map((i) => [i.terminalId, i.rel, i.label]), [[id, 'alpha', 'Guarded command confirmation']]);
 
     // The agent got its answer: the bridge clears the token and the item leaves every window.
     const cleared = await report(id, 2, '--clear-token', 'blocked');
@@ -334,6 +383,9 @@ test('the stream still carries items and night notes on every line, and stays ca
   });
   const reader = again.body!.pipeThrough(new TextDecoderStream()).getReader();
   const first = JSON.parse((await reader.read()).value!.split('\n')[0]);
-  assert.deepEqual(Object.keys(first).sort(), ['items', 'nightNotes']);
+  // `agentStates`: what each followed agent is doing, by terminal id, which the sidebar, tabs and
+  // panes read once an agent has no card (#12).
+  assert.deepEqual(Object.keys(first).sort(), ['agentStates', 'items', 'nightNotes']);
+  assert.equal(typeof first.agentStates, 'object');
   await reader.cancel();
 });

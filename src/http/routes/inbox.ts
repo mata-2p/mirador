@@ -122,8 +122,11 @@ export const inboxRoutes: RouteModule = async (ctx) => {
         if (streams >= MAX_STREAMS) throw new HttpError(429, 'too many inbox streams', 'inbox_busy');
         streams++;
         res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store' });
-        const send = (items: AttentionItem[], nightNotes: AttentionItem[]) => res.write(JSON.stringify({ items, nightNotes }) + '\n');
-        send(store.items(), store.nightNotes());
+        // `agentStates`: what each followed agent is doing, by terminal id. The inbox alone cannot
+        // say it once a card has left, and the sidebar, tabs and panes need it then (#12).
+        const send = (items: AttentionItem[], nightNotes: AttentionItem[], states: Record<string, string>) =>
+          res.write(JSON.stringify({ items, nightNotes, agentStates: states }) + '\n');
+        send(store.items(), store.nightNotes(), store.agentStates());
         const unsubscribe = store.subscribe(send);
         const heartbeat = setInterval(() => res.write('{}\n'), HEARTBEAT_MS);
         let open = true;

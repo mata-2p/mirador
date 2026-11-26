@@ -16,6 +16,7 @@
 // (the `inbox:stream` event). A stream silent for longer than two heartbeats is dropped and
 // reopened, and so is one the page comes back to after a long time hidden (inbox-model.js streamWatch).
 import { api, el, emit, getLanguage, on, prefs, session, slot, t, workspaceById } from '/core.js';
+import { setAgentStates } from '/features/agent-states.js';
 import { BRAND } from '/mode-model.js';
 import { plural } from '/i18n.js';
 import { nightView } from '/i18n/inbox.js';
@@ -402,6 +403,10 @@ async function follow() {
             message = JSON.parse(line);
           } catch {
             continue;
+          }
+          // A state that changes while its card does not, or after the card left (#12).
+          if (message?.agentStates && typeof message.agentStates === 'object') {
+            setAgentStates(message.agentStates);
           }
           if (Array.isArray(message?.items)) {
             items = message.items;

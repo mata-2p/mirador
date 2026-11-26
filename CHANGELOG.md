@@ -7,6 +7,10 @@ All notable changes to Mirador, written for the people who run it. The format fo
 
 ### Changed
 
+- The sidebar, a terminal's tab and its pane keep showing an agent as **finished** or **in error**
+  after its card leaves the inbox, instead of falling back to **working**: the inbox stream now
+  carries each agent's state.
+
 - On Linux x64 and arm64 with glibc 2.28 or newer, the one-line install (`curl … bootstrap.sh | sh`) installs the
   prebuilt release of 0.2.0 instead of building Mirador from source: it needs no git, Node, pnpm or compiler, and
   it checks the archive against the sha256 written in `scripts/bootstrap.sh` before unpacking it. When

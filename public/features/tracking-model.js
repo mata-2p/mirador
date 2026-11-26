@@ -7,6 +7,9 @@
 /** How many titles each active project shows. */
 const TITLES = 3;
 
+/** The states the server reports for an agent terminal (GET /api/terminals `agentState`). */
+const SERVER_STATES = new Set(['working', 'waiting', 'finished', 'error']);
+
 /**
  * State of an agent terminal: 'exited' when its process ended, 'waiting' when the
  * inbox says it needs an answer (blocked or prompt), 'error' when its program reported
@@ -15,7 +18,10 @@ const TITLES = 3;
  */
 export function agentState(terminal, item) {
   if (terminal.status === 'exited') return 'exited';
-  if (!item) return 'working';
+  // No card: the server's own state, sent with the terminal and with the inbox stream. An agent
+  // whose card left the inbox is still finished or in error, and showing it as working is what #12
+  // reported. 'unknown', absent, or an older server keeps the old answer.
+  if (!item) return SERVER_STATES.has(terminal.agentState) ? terminal.agentState : 'working';
   if (item.kind === 'error') return 'error';
   return item.kind === 'finished' ? 'finished' : 'waiting';
 }

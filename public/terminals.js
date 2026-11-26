@@ -20,6 +20,7 @@ import { confirmDialog, showAlert } from '/dialog.js';
 import { exitLabels, fitColumns, gridColumns, gridTracks, groupTerminals, mostRecentTerminal, reopensActiveGroup, reorderHintGroup, showsTabsBar, visibleCount } from '/terminal-groups.js';
 import { moveTerminal, moveTerminalBy, readOrder } from '/terminal-order-model.js';
 import { withSleepingGroups } from '/features/sleeping-model.js';
+import { agentStates } from '/features/agent-states.js';
 import { terminalBody } from '/features/agent-picker-model.js';
 import { inputRetakeDue, returningSizes } from '/terminal-size.js';
 import { paneStatus } from '/pane-status-model.js';
@@ -99,7 +100,14 @@ function xtermTheme() {
 
 /** TerminalInfo of every terminal this window shows, in creation order (groupTerminals applies the saved order). */
 export function terminalList() {
-  return [...terminals.values()].map((record) => record.info);
+  // Each agent's state as the inbox stream last reported it, so a state that changes after its card
+  // left the inbox still reaches the sidebar, tabs and panes (#12). The info this page loaded with
+  // carries the state as of that moment, which goes stale.
+  const states = agentStates.current;
+  return [...terminals.values()].map((record) => {
+    const state = states[record.info.id];
+    return state ? { ...record.info, agentState: state } : record.info;
+  });
 }
 
 export function activeTerminalId() {

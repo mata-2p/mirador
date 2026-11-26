@@ -308,11 +308,11 @@ function parse(line: string): Report | null {
  */
 export class AttentionStore {
   private readonly panes = new Map<string, Pane>();
-  private readonly listeners = new Set<(items: AttentionItem[], nightNotes: AttentionItem[]) => void>();
+  private readonly listeners = new Set<(items: AttentionItem[], nightNotes: AttentionItem[], states: Record<string, AgentAttentionState>) => void>();
   private readonly stateListeners = new Set<(terminalId: string, state: AgentAttentionState) => void>();
   private readonly sessionListeners = new Set<(terminalId: string, session: string) => void>();
   private readonly now: () => number;
-  private last = '[[],[]]';
+  private last = '[[],[],{}]';
   /** Pushes the change when the next report expires (its herdr TTL). */
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
   private expiryAt: number | null = null;
@@ -575,8 +575,8 @@ export class AttentionStore {
     return sortItems(notes);
   }
 
-  /** Calls `listener` with the new items and night notes whenever they change. Returns an unsubscribe function. */
-  subscribe(listener: (items: AttentionItem[], nightNotes: AttentionItem[]) => void): () => void {
+  /** Calls `listener` with the new items, night notes and agent states whenever any of them changes. Returns an unsubscribe function. */
+  subscribe(listener: (items: AttentionItem[], nightNotes: AttentionItem[], states: Record<string, AgentAttentionState>) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -592,6 +592,24 @@ export class AttentionStore {
     const attention = pane.sources.get(ATTENTION_SOURCE);
     if ((attention && (attention.expiresAt === null || attention.expiresAt > this.now())) || this.activity(pane)) return 'working';
     return 'unknown';
+  }
+
+  /**
+   * Every followed terminal's state, by id: what a window uses when an agent has no inbox card.
+   *
+   * The inbox alone cannot say this. A card leaves the inbox once it is read or answered, and the
+   * agent goes on being finished or in error; the sidebar, tabs and panes read this instead (#12).
+   */
+  agentStates(): Record<string, AgentAttentionState> {
+    const states: Record<string, AgentAttentionState> = {};
+    for (const id of this.panes.keys()) {
+      const state = this.agentState(id);
+      // Only the states a window cannot already assume. Its fallback for an agent it has no entry
+      // for is working, so 'working' and 'unknown' add nothing; naming them would make a fresh
+      // terminal, or an activity line, push a message whose cards did not change.
+      if (state === 'waiting' || state === 'finished' || state === 'error') states[id] = state;
+    }
+    return states;
   }
 
   /**
@@ -742,12 +760,15 @@ export class AttentionStore {
     }
     const items = this.items();
     const nightNotes = this.nightNotes();
-    const snapshot = JSON.stringify([items, nightNotes]);
+    // The states are part of what a window reads, so a state that changes while no card does still
+    // reaches it (#12).
+    const states = this.agentStates();
+    const snapshot = JSON.stringify([items, nightNotes, states]);
     if (snapshot === this.last) return;
     this.last = snapshot;
     for (const listener of this.listeners) {
       try {
-        listener(items, nightNotes);
+        listener(items, nightNotes, states);
       } catch (error) {
         console.error('inbox listener failed:', error);
       }
