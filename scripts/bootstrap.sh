@@ -7,15 +7,16 @@
 # install.sh prints are full ones. It never runs sudo; install.sh only says how to install what is
 # missing. POSIX sh: `sh` may be dash.
 #
-# When main pins a release below (MIRADOR_VERSION and the sha256 of each platform's archive), Linux x64
-# and arm64 with glibc 2.28 or newer get that release's prebuilt archive instead, which bundles Node and a
-# built node-pty: it is downloaded from GitHub Releases, checked against the sha256 pinned here before it
-# is unpacked into <that folder>/<version>, and <that folder>/current points at it; then its doctor runs and
-# bin/mirador install adds the launcher. A git clone in that folder is never overwritten or deleted: the
+# Linux x64 and arm64 with glibc 2.28 or newer get the release pinned below instead (MIRADOR_VERSION and the
+# sha256 of each platform's archive): its prebuilt archive, which bundles Node and a built node-pty, is
+# downloaded from GitHub Releases, checked against the sha256 pinned here before it is unpacked into
+# <that folder>/<version>, and <that folder>/current points at it; then its doctor runs and bin/mirador
+# install adds the launcher. A git clone in that folder is never overwritten or deleted: the
 # script stops and says what to do. A first install cut off abruptly leaves only its download folders
 # (.download.XXXXXX) there: the next run removes them and goes on. It checks for no updates; running it
 # again is how you update, and when a Mirador server runs it says that the server keeps the previous
-# version until it restarts. Every other platform, or one with an empty sha256, installs from source as above.
+# version until it restarts. Every other platform, one with an empty sha256, and every platform while
+# MIRADOR_VERSION is empty (no release pinned) install from source as above.
 #
 # A download cut short hands sh only part of this file, so nothing runs before the last line: the trap
 # above, set first, says the copy is incomplete whenever sh ends before main has started. Everything else
@@ -200,11 +201,11 @@ prebuilt() {
 main() {
   started=1
   set -eu
-  # The release this script installs prebuilt (see docs/releasing.md). All empty: no release is pinned, and
-  # every platform installs from source. A promotion PR to main sets these three lines, and only them, to the
-  # lines in the release's notes (scripts/release/pins.sh); an empty sha256 leaves its platform on the
-  # install from source. They are set here, not read from the environment, so only a reviewed change to this
-  # script can change what it downloads.
+  # The release this script installs prebuilt (see docs/releasing.md). A promotion PR to main sets these three
+  # lines, and only them, to the lines in the next release's notes (scripts/release/pins.sh), replacing the
+  # previous release's. An empty sha256 leaves its platform on the install from source; an empty
+  # MIRADOR_VERSION (no release pinned) leaves every platform there. They are set here, not read from the
+  # environment, so only a reviewed change to this script can change what it downloads.
   MIRADOR_VERSION="0.2.0"
   MIRADOR_SHA256_LINUX_X64="c534887213a3beaa0401fe469b70f70a6d70aee612d452bcb8a96656e05732d9"
   MIRADOR_SHA256_LINUX_ARM64="42cdb3647214714dc7432d8317ed472d64570f39a43b8f61e9680befe49accd4"

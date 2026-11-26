@@ -3,7 +3,8 @@
 For maintainers. A release is a tag, a set of prebuilt Linux archives on a GitHub release, and a promotion PR
 that pins that release in `scripts/bootstrap.sh`. Nothing reaches users until all three are done: the
 workflow only creates a draft, a maintainer publishes it by hand, and the one-line install keeps installing the
-version it pins (or from source, while none is pinned) until the promotion PR is merged.
+previous release it pins until the promotion PR is merged (with no release pinned, every platform installs
+from source).
 
 ## What the release workflow builds
 
@@ -59,7 +60,9 @@ releases and attestations.
   that does not exist creates it, with no reviewer.
 - Decide whether to turn on immutable releases (**Settings › General › Releases**). Once a release is published
   they lock its assets and its tag, so an archive whose sha256 is pinned in `scripts/bootstrap.sh` can never be
-  swapped. A mistake in a published release then needs a new version number. Drafts can still be edited.
+  swapped. A mistake in a published release's files then needs a new version number; a release published on
+  the wrong tag does not (see [A release published on the wrong tag](#a-release-published-on-the-wrong-tag)).
+  Drafts can still be edited.
 
 ## Cutting a release
 
@@ -91,12 +94,32 @@ On the draft release (**Releases**), before publishing it:
    gh attestation verify mirador-0.2.0-linux-arm64.tar.gz -R mata-2p/mirador
    ```
 
-2. The smoke job already unpacked each archive in clean containers (the oldest glibc supported and a
+2. Check the draft's tag. This must print the version's tag, `v0.2.0`, not `untagged-…`:
+
+   ```sh
+   gh release view v0.2.0 -R mata-2p/mirador --json tagName --jq .tagName
+   ```
+
+   When it says `release not found`, the draft is on another tag: list the drafts' tags with
+   `gh api repos/mata-2p/mirador/releases --jq '.[]|select(.draft)|{id,name,tag_name}'`. A draft published on
+   `untagged-…` creates that tag, and `scripts/bootstrap.sh` cannot download from it. Check it again after
+   every edit of the draft.
+3. The smoke job already unpacked each archive in clean containers (the oldest glibc supported and a
    current distribution), ran its doctor and started its server. To try one by hand as well, unpack it on a
    clean Linux system with no Node, pnpm or compiler and run `node/bin/node src/doctor.ts`, then
    `bin/mirador`.
-3. The first release with archives is shown to the owner as a draft, before anyone publishes it.
-4. Publish it: **Edit › Publish release**.
+4. The first release with archives is shown to the owner as a draft, before anyone publishes it.
+5. Publish it: **Edit › Publish release**.
+
+Edit a draft's notes with `gh release edit`, which sends the release's tag along with the new notes:
+
+```sh
+gh release edit v0.2.0 -R mata-2p/mirador --notes-file notes.md
+```
+
+Never edit them with a REST API `PATCH` that sends only `body`: it resets a draft's tag to its `untagged-…`
+placeholder, and publishing the draft then creates that tag. If a `PATCH` cannot be avoided, send `tag_name`
+with it, then read `tag_name` again (`gh api repos/mata-2p/mirador/releases/<id> --jq .tag_name`).
 
 ## Release candidates
 
@@ -117,22 +140,79 @@ final version:
 
 ## The promotion PR
 
-Once the release is published, a PR to main pins it in `scripts/bootstrap.sh`: it replaces the three pin
-lines at the top of `main`
+Once the release is published, check that `https://github.com/mata-2p/mirador/releases/download/v<version>/SHA256SUMS`
+answers 200: the installer downloads from `releases/download/v<version>/`. Then a PR to main pins it in
+`scripts/bootstrap.sh`: it replaces the three pin lines at the top of `main`, which carry the previous
+release's version and sums (all three empty while no release is pinned),
 
 ```sh
-  MIRADOR_VERSION=""
-  MIRADOR_SHA256_LINUX_X64=""
-  MIRADOR_SHA256_LINUX_ARM64=""
+  MIRADOR_VERSION="<previous version>"
+  MIRADOR_SHA256_LINUX_X64="<its linux-x64 sha256>"
+  MIRADOR_SHA256_LINUX_ARM64="<its linux-arm64 sha256>"
 ```
 
-with the lines in the release notes (`scripts/release/pins.sh` prints them from `SHA256SUMS`), and changes
+with the lines in the new release's notes (`scripts/release/pins.sh` prints them from `SHA256SUMS`), and changes
 nothing else. Check each sha256 against the published `SHA256SUMS`. Leaving a platform's sha256 empty keeps
 that platform on the install from source. From the merge on, `curl … bootstrap.sh | sh` installs that release
 on Linux x64 and arm64.
 
 The checksum the installer trusts comes from this reviewed change to main, not from the release that serves the
 archive: someone who could replace an archive on the release still could not make the installer accept it.
+
+## A release published on the wrong tag
+
+The symptom: the published release is on a tag named `untagged-<hex>`, which publishing created at the tip of
+main, instead of `v<version>`; `v<version>` has no release, and `releases/download/v<version>/…`, which
+`scripts/bootstrap.sh` downloads from, answers 404. It happened with 0.2.0, after the draft's notes were edited
+with a `PATCH` that sent only `body` (see [Reviewing the draft](#reviewing-the-draft)).
+
+With immutable releases on, a published release's files and tag are locked, so it cannot be moved to
+`v<version>`; its title, notes and the pre-release and latest flags stay editable. A tag that never had an
+immutable release can still get one, so `v<version>` ships with the same files and no new version number:
+
+1. Download the wrong release's three files into a fresh temporary folder, and check them:
+
+   ```sh
+   cd "$(mktemp -d)"
+   gh release download untagged-<hex> -R mata-2p/mirador
+   sha256sum -c SHA256SUMS
+   gh attestation verify mirador-<version>-linux-x64.tar.gz -R mata-2p/mirador
+   gh attestation verify mirador-<version>-linux-arm64.tar.gz -R mata-2p/mirador
+   ```
+
+   The attestations stay valid: they name the archives' sha256 and the workflow run on `refs/tags/v<version>`,
+   not the release.
+2. Create a draft on `v<version>` with those three files, the same title, and the notes in `notes.md` (the
+   wrong release's notes, from `gh release view untagged-<hex> -R mata-2p/mirador --json body --jq .body`,
+   changed where needed). `--verify-tag` stops it when `v<version>` is not on GitHub, instead of creating the
+   tag:
+
+   ```sh
+   gh release create v<version> -R mata-2p/mirador --draft --verify-tag --title "Mirador v<version>" \
+     --notes-file notes.md \
+     mirador-<version>-linux-x64.tar.gz mirador-<version>-linux-arm64.tar.gz SHA256SUMS
+   ```
+
+3. Review it as in [Reviewing the draft](#reviewing-the-draft), its tag included, then publish it with
+   **Set as the latest release** ticked.
+4. Delete the release on the wrong tag, then its `untagged-<hex>` tag:
+
+   ```sh
+   gh release delete untagged-<hex> -R mata-2p/mirador --cleanup-tag
+   ```
+
+   Under immutable releases, the name of a deleted release's tag can never be used again. Nothing uses
+   `untagged-<hex>`, so that does not matter.
+5. Check that `releases/download/v<version>/SHA256SUMS` answers 200, and that no `untagged` release or tag
+   remains (the last two print nothing):
+
+   ```sh
+   curl -sSL -o /dev/null -w '%{http_code}\n' https://github.com/mata-2p/mirador/releases/download/v<version>/SHA256SUMS
+   gh release list -R mata-2p/mirador --json tagName --jq '.[].tagName | select(startswith("untagged"))'
+   git ls-remote --tags https://github.com/mata-2p/mirador.git 'untagged*'
+   ```
+
+Then the promotion PR goes ahead as usual.
 
 ## Updates and Node security releases
 
