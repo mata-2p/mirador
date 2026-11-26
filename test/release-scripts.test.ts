@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { access, chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -304,4 +305,81 @@ test('smoke.sh refuses a missing or misnamed archive, or no container, and runs 
   }
   assert.equal(await exists(s.dockerLog), false);
   assert.equal(await exists(s.summary), false);
+});
+
+/**
+ * A tiny archive of the shape smoke-in-container.sh expects, and the folders it would find mounted
+ * in a container: `bin/mirador` and `node/bin/node` are stubs that log their arguments and print a
+ * link, and `src/doctor.ts` is empty. `script` overrides one stub's body so a failure path can be run.
+ */
+async function smokeKit(overrides: Record<string, string> = {}) {
+  const dir = await fresh();
+  const archive = join(dir, 'mirador-0.2.0-linux-x64.tar.gz');
+  const root = join(dir, 'unpack');
+  const app = join(root, 'mirador-0.2.0-linux-x64');
+  const out = join(dir, 'out');
+  const home = join(dir, 'home');
+  const work = join(dir, 'work');
+  for (const sub of ['bin', 'node/bin', 'src']) await mkdir(join(app, sub), { recursive: true });
+  await mkdir(out, { recursive: true });
+  await mkdir(home, { recursive: true });
+  await writeFile(join(app, 'src', 'doctor.ts'), '');
+  const stubs: Record<string, string> = {
+    'bin/mirador': overrides.mirador ?? 'echo "http://127.0.0.1:7878/#launch=NONCE123"\n',
+    'node/bin/node': overrides.node ?? 'exit 0\n',
+  };
+  for (const [rel, body] of Object.entries(stubs)) {
+    await writeFile(join(app, rel), `#!/bin/sh\n${body}`);
+    await chmod(join(app, rel), 0o755);
+  }
+  await execFile('tar', ['-czf', archive, '-C', root, 'mirador-0.2.0-linux-x64']);
+  return { dir, archive, out, home, work };
+}
+
+/**
+ * Runs smoke-in-container.sh with the folders a container would mount, without a container.
+ *
+ * `getconf`, the first thing the script calls, answers the host's glibc in a container; here it is a
+ * stub, so the run reaches the paths under test without depending on this machine's libc.
+ */
+async function runSmoke(kit: { dir: string; archive: string; out: string; home: string; work: string }) {
+  const dir = await fresh();
+  const bin = join(dir, 'bin');
+  await mkdir(bin, { recursive: true });
+  for (const tool of ['sh', 'tar', 'mkdir', 'cat', 'tail', 'date', 'uname', 'grep', 'head', 'rm']) {
+    // Only link a tool that exists: a dangling symlink makes the PATH entry unusable, which looks
+    // exactly like a missing tool and sends the run somewhere else.
+    for (const base of ['/usr/bin', '/bin']) {
+      const from = join(base, tool);
+      if (!existsSync(from)) continue;
+      await symlink(from, join(bin, tool));
+      break;
+    }
+  }
+  await writeFile(join(bin, 'getconf'), '#!/bin/sh\necho "glibc 2.28"\n');
+  await chmod(join(bin, 'getconf'), 0o755);
+  return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+    const child = spawn('/bin/sh', [join(SCRIPTS, 'smoke-in-container.sh'), kit.archive], {
+      cwd: kit.dir,
+      env: { PATH: bin, HOME: kit.home, SMOKE_OUT: kit.out, SMOKE_WORK: kit.work },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+test('smoke-in-container.sh prints the server log tail when a start fails, and says why (#57)', async () => {
+  // bin/mirador starts nothing and writes the log a crashed server leaves, as on the oldest glibc.
+  const kit = await smokeKit({
+    mirador: 'mkdir -p "$HOME/.local/state/mirador" && printf "boot: glibc 2.28 too old\n" > "$HOME/.local/state/mirador/server.log" && exit 1',
+
+  });
+  const run = await runSmoke(kit);
+  assert.equal(run.code, 1, `stdout=${run.stdout} stderr=${run.stderr}`);
+  assert.match(run.stderr, /smoke: bin\/mirador did not start the server/);
+  assert.match(run.stderr, /boot: glibc 2.28 too old/, 'the log tail is missing');
 });

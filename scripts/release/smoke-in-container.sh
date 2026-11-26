@@ -18,29 +18,47 @@ archive="$1"
 file="${archive##*/}"
 name="${file%.tar.gz}"
 
+logtail() {
+  # The server's log is the only evidence for a start that failed or answered nothing, and the
+  # container runs with --rm, so it is gone once this exits (#57).
+  if [ -f "$HOME/.local/state/mirador/server.log" ]; then
+    echo "smoke: last lines of the server log:" >&2
+    tail -n 40 "$HOME/.local/state/mirador/server.log" >&2 || true
+  fi
+}
 fail() {
   echo "smoke: $*" >&2
+  logtail
   exit 1
 }
 now_ms() { echo $(($(date +%s%N) / 1000000)); }
-result() { printf '%s=%s\n' "$1" "$2" >>/out/result; }
+# /out and /tmp/smoke are where the container mounts them; the test runs this script without one,
+# so both can be pointed elsewhere and keep the same meaning (#57).
+out="${SMOKE_OUT:-/out}"
+work="${SMOKE_WORK:-/tmp/smoke}"
+result() { printf '%s=%s\n' "$1" "$2" >>"$out/result"; }
 
 for tool in node npm npx pnpm gcc cc g++ c++ clang make; do
   if found="$(command -v "$tool")"; then fail "this container is not clean: $tool is on PATH ($found)"; fi
 done
 
-glibc="$(getconf GNU_LIBC_VERSION)"
+# `set -e` would end the run here with no smoke message when getconf cannot answer (#57).
+glibc="$(getconf GNU_LIBC_VERSION)" || fail "getconf cannot report the glibc version"
 glibc="${glibc#glibc }"
 result glibc "$glibc"
-# shellcheck disable=SC1091 # the container's own os-release
-distro="$(. /etc/os-release && echo "$PRETTY_NAME")"
+# The container's own os-release; when it cannot be read, the kernel name says enough (#57).
+distro="$(uname -s)"
+if [ -r /etc/os-release ]; then
+  # shellcheck disable=SC1091
+  distro="$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-$distro}")" || distro="$(uname -s)"
+fi
 echo "smoke: $file on $distro, glibc $glibc, $(uname -m)"
 
-mkdir -p "$HOME" /tmp/smoke
+mkdir -p "$HOME" "$work"
 start="$(now_ms)"
-tar -xzf "$archive" -C /tmp/smoke
+tar -xzf "$archive" -C "$work"
 result unpack_ms "$(($(now_ms) - start))"
-app="/tmp/smoke/$name"
+app="$work/$name"
 [ -x "$app/bin/mirador" ] || fail "$file has no executable $name/bin/mirador"
 [ -x "$app/node/bin/node" ] || fail "$file has no executable $name/node/bin/node"
 cd "$app"
@@ -51,12 +69,20 @@ result doctor_ms "$(($(now_ms) - start))"
 
 unset DISPLAY WAYLAND_DISPLAY
 start="$(now_ms)"
-launched="$(bin/mirador)" || fail "bin/mirador did not start the server (see above)"
+# Captured rather than run bare: a start that fails must still print the log (#57). Its own output
+# is kept apart from its errors, so a warning never spoils the link extraction below.
+errfile="$work/launch.err"
+launched="$(bin/mirador 2>"$errfile")" || {
+  cat "$errfile" >&2 || true
+  fail "bin/mirador did not start the server"
+}
+cat "$errfile" >&2 || true
 result start_ms "$(($(now_ms) - start))"
 echo "$launched"
 link="$(printf '%s\n' "$launched" | grep -o 'http://127\.0\.0\.1:[0-9]*/#launch=[A-Za-z0-9_-]*' | head -n 1 || true)"
 [ -n "$link" ] || fail "bin/mirador printed no one-time link"
-bin/mirador status
+# `set -e` would end the run on its own with no smoke message (#57).
+bin/mirador status || fail "bin/mirador status reports the server is not running"
 
 # The page, then the session the link opens and the API behind it, as a browser would.
 ./node/bin/node -e '
@@ -85,7 +111,6 @@ bin/mirador status
     process.exit(1);
   });
 ' "$link" || {
-  tail -n 40 "$HOME/.local/state/mirador/server.log" >&2 || true
   bin/mirador stop || true
   fail "the server does not answer (see above)"
 }
