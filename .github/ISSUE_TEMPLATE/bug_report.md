@@ -19,7 +19,10 @@ labels: bug
 ## Doctor report
 
 <!--
-Run `pnpm run doctor --report` in your Mirador folder and paste the fenced block it prints.
+For an install from source, run `pnpm run doctor --report` in your Mirador folder and paste the fenced block it prints.
+After the one-line install of the prebuilt release, which has no pnpm, run
+`~/.local/share/mirador/current/node/bin/node ~/.local/share/mirador/current/src/doctor.ts --report`
+instead, from any folder.
 It holds no path under your home folder, no user or host name, and nothing from the config besides the mode.
 -->
 

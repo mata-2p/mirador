@@ -100,10 +100,19 @@ On the draft release (**Releases**), before publishing it:
    gh release view v0.2.0 -R mata-2p/mirador --json tagName --jq .tagName
    ```
 
-   When it says `release not found`, the draft is on another tag: list the drafts' tags with
-   `gh api repos/mata-2p/mirador/releases --jq '.[]|select(.draft)|{id,name,tag_name}'`. A draft published on
-   `untagged-…` creates that tag, and `scripts/bootstrap.sh` cannot download from it. Check it again after
-   every edit of the draft.
+   `gh release view` finds a draft by its tag, and prints `release not found` (exit 1) when no release has
+   that tag (both tested on a test draft, 2026-11-26). When it says `release not found`, the draft is on
+   another tag: list the drafts' tags with
+   `gh api repos/mata-2p/mirador/releases --jq '.[]|select(.draft)|{id,name,tag_name}'`. A draft creates its
+   tag only when it is published: a draft published on `untagged-…` creates that tag, and
+   `scripts/bootstrap.sh` cannot download from it. Check it again after every edit of the draft.
+
+   A draft's page URL (`url` in `gh release view`, `html_url` in the API) always ends in
+   `releases/tag/untagged-<hex>`, even when its tag is right, and the hex changes after an edit. That URL is
+   not the check: only `tag_name` tells which tag the draft will publish on.
+
+   On the web, a healthy draft shows its tag and its commit under the title, and its edit page says
+   **Tag: v0.2.0 — Existing tag**. The broken 0.2.0 draft showed no tag.
 3. The smoke job already unpacked each archive in clean containers (the oldest glibc supported and a
    current distribution), ran its doctor and started its server. To try one by hand as well, unpack it on a
    clean Linux system with no Node, pnpm or compiler and run `node/bin/node src/doctor.ts`, then
@@ -111,7 +120,9 @@ On the draft release (**Releases**), before publishing it:
 4. The first release with archives is shown to the owner as a draft, before anyone publishes it.
 5. Publish it: **Edit › Publish release**.
 
-Edit a draft's notes with `gh release edit`, which sends the release's tag along with the new notes:
+Edit a draft's notes with `gh release edit … --notes-file`. It keeps the draft's `tag_name` (tested on a test
+draft, 2026-11-26: `tag_name` stayed the same, and the notes matched the file byte for byte, CRLF line ends
+included):
 
 ```sh
 gh release edit v0.2.0 -R mata-2p/mirador --notes-file notes.md
@@ -127,8 +138,9 @@ A release candidate (`0.2.0-rc.1`) goes through the same steps, with three diffe
 final version:
 
 - The workflow creates its draft as a pre-release, because the tag has a pre-release suffix, so the releases
-  page keeps the last stable release as **Latest**. Before publishing, check that **Set as a pre-release** is
-  ticked. The flag stays editable after publishing.
+  page keeps the last stable release as **Latest**. Before publishing, check that the edit page's
+  **Release label** group has **Pre-release** selected, not **None** or **Latest**. The label stays editable
+  after publishing.
 - With immutable releases on, a published candidate's tag and assets cannot change and its tag name cannot be
   used again, even after the release is deleted: a fix ships as the next candidate (`-rc.2`).
 - No promotion PR: `scripts/bootstrap.sh` in main never pins a candidate. To try the install end to end, run a
@@ -167,8 +179,9 @@ main, instead of `v<version>`; `v<version>` has no release, and `releases/downlo
 with a `PATCH` that sent only `body` (see [Reviewing the draft](#reviewing-the-draft)).
 
 With immutable releases on, a published release's files and tag are locked, so it cannot be moved to
-`v<version>`; its title, notes and the pre-release and latest flags stay editable. A tag that never had an
-immutable release can still get one, so `v<version>` ships with the same files and no new version number:
+`v<version>`; its title, notes and **Release label** stay editable, and it can still be deleted (step 4).
+A tag that never had an immutable release can still get one, so `v<version>` ships with the same files and
+no new version number:
 
 1. Download the wrong release's three files into a fresh temporary folder, and check them:
 
@@ -194,8 +207,11 @@ immutable release can still get one, so `v<version>` ships with the same files a
    ```
 
 3. Review it as in [Reviewing the draft](#reviewing-the-draft), its tag included, then publish it with
-   **Set as the latest release** ticked.
-4. Delete the release on the wrong tag, then its `untagged-<hex>` tag:
+   **Latest** selected under **Release label**.
+4. Delete the release on the wrong tag, then its `untagged-<hex>` tag. For 0.2.0 both were deleted on the
+   web: first the release, from its page, then the tag, from the **Tags** tab. GitHub allowed both although
+   the release was immutable. **Delete tag** is disabled while the tag has a release, so the release goes
+   first. The same in one command, a path that was not tested:
 
    ```sh
    gh release delete untagged-<hex> -R mata-2p/mirador --cleanup-tag
