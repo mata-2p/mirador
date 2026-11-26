@@ -13,7 +13,7 @@ import { LEFT_OFF_MAX_LINE_BYTES, LeftOffStore, leftOffDir } from '../../memory/
 import { provideNightAttention, whenNightService } from '../../night/service.ts';
 import type { RouteModule } from '../context.ts';
 import { HttpError, SECURITY_HEADERS, sendJson, sendNoContent } from '../respond.ts';
-import { bearerToken, sessionClosers } from '../security.ts';
+import { bearerToken, requireSessionClosers } from '../security.ts';
 
 const APP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const SHIM = join(APP_DIR, 'bin', 'herdr-shim');
@@ -136,10 +136,11 @@ export const inboxRoutes: RouteModule = async (ctx) => {
           streams--;
         };
         // "Sign out the other windows" ends the stream of every session it forgets: nothing more is sent.
-        const token = bearerToken(req.headers.authorization);
+        // Keyed on the stored token the sign-out will look up, not the raw header (#69).
+        const token = ctx.canonicalToken(bearerToken(req.headers.authorization));
         const unregister =
           (token &&
-            sessionClosers(ctx.terminals)?.add(token, () => {
+            requireSessionClosers(ctx.terminals).add(token, () => {
               stop();
               res.end();
             })) ||

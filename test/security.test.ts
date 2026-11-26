@@ -11,6 +11,9 @@ import {
   launchNonceTtlMs,
   protocolToken,
   tokensMatch,
+  SessionClosers,
+  provideSessionClosers,
+  requireSessionClosers,
 } from '../src/http/security.ts';
 
 const PORT = 4545;
@@ -155,4 +158,29 @@ test('preserved: after a sign-out the cap still forgets the least recently used 
   sessions.create();
   assert.equal(sessions.has(idle), false);
   assert.equal(sessions.has(caller), true);
+});
+
+// #69: a stream or socket must register its closer under the string a sign-out looks up.
+test('a session answers its stored token, so a closer registers under the same string a sign-out forgets', () => {
+  const sessions = new Sessions(8);
+  const token = sessions.create();
+  assert.equal(sessions.canonical(token), token);
+  assert.equal(sessions.canonical('not-a-session'), null);
+  assert.equal(sessions.canonical(undefined), null);
+  const closers = new SessionClosers();
+  let closed = 0;
+  closers.add(sessions.canonical(token)!, () => (closed += 1));
+  // A second session is the caller of the sign-out; `token` is the one it forgets.
+  const caller = sessions.create();
+  closers.close(sessions.signOutOthers(caller));
+  assert.equal(closed, 1, 'the stored token the sign-out returns runs the closer registered for it');
+});
+
+// #69: falling back to a no-op would silently stop ending streams on sign-out.
+test('a route that needs the session closers says so when they are not wired', () => {
+  const app = {};
+  assert.throws(() => requireSessionClosers(app), /not wired/);
+  const closers = new SessionClosers();
+  provideSessionClosers(app, closers);
+  assert.equal(requireSessionClosers(app), closers);
 });

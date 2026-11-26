@@ -18,6 +18,11 @@ export interface AppContext {
    */
   resolveFolder(ws: unknown, rel: unknown): Promise<ResolvedFolder>;
   terminals: TerminalRegistry;
+  /**
+   * The stored form of a session token the client presented, or null. What a stream or socket
+   * registers its closer under, so a sign-out looks up the same string (#69).
+   */
+  canonicalToken(token: string | undefined): string | null;
   engram: EngramClient;
   /** Today's date (YYYY-MM-DD) in the configured time zone. */
   today(): string;

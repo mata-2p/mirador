@@ -122,6 +122,18 @@ export class Sessions {
   }
 
   /**
+   * The stored token `given` names, or null: the one `SessionClosers.close` receives when a sign-out
+   * forgets a session, so a socket or stream registers under the same string the sign-out looks up.
+   *
+   * Membership goes through `tokensMatch`; keying a closer by the raw header instead would agree only
+   * while the client echoes its token byte for byte (#69).
+   */
+  canonical(given: string | undefined): string | null {
+    if (!given) return null;
+    return this.tokens.find((known) => tokensMatch(given, known)) ?? null;
+  }
+
+  /**
    * "Sign out the other windows": forgets every session but `keep`'s and returns the tokens it
    * forgot, so the server can close what they hold open (SessionClosers). An unknown or missing `keep` forgets
    * nothing, so a caller can never sign itself out this way.
@@ -173,4 +185,14 @@ export function provideSessionClosers(app: object, closers: SessionClosers): voi
 
 export function sessionClosers(app: object): SessionClosers | undefined {
   return closersByApp.get(app);
+}
+
+// A route that registers a closer needs the closers wired: falling back to a no-op would disable
+// ending streams and sockets on sign-out without a word (#69).
+export function requireSessionClosers(app: object): SessionClosers {
+  const closers = closersByApp.get(app);
+  if (!closers) {
+    throw new Error('mirador: the session closers are not wired for this terminal registry; provideSessionClosers must run before the routes do');
+  }
+  return closers;
 }
