@@ -75,6 +75,31 @@ test('the Ko-fi handle is allowed only in .github/FUNDING.yml and the README bad
   assert.equal(hits('.github/FUNDING.yml', `custom: ${FIRST}`).length, 1, 'FUNDING.yml allows the handle, not the name');
 });
 
+/** README.es.md, the Spanish README (L20): the same badge line and its own author section. */
+const ES_BADGES = `[![test](https://x/badge.svg)](https://x) [![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B)](https://ko-fi.com/${HANDLE})`;
+const ES_README = `# Mirador\n\n## Autor\n\nMirador lo creó ${FULL}.\n\n### Contacto\n\n${FIRST} otra vez\n\n## Licencia\n\nPor ${FIRST}.\n`;
+
+test('README.es.md allows the owner\'s name in its ## Autor section, up to the next ## heading (L20)', () => {
+  assert.equal(allowed('README.es.md', ES_README).filter((e) => e.kind === 'name').length, 2);
+  assert.equal(allowed('README.es.md', `## Autor\n\n${FULL}\n`)[0]?.allowed, 'the README.es.md ## Autor section (L20)');
+});
+
+test('README.es.md allows the Ko-fi handle on its badge line (L20)', () => {
+  assert.deepEqual(hits('README.es.md', ES_BADGES), []);
+  assert.equal(allowed('README.es.md', ES_BADGES)[0]?.allowed, 'the Ko-fi handle in the README.es.md badge line (L20)');
+});
+
+test('README.es.md: the owner\'s name outside ## Autor is still a hit, under ## Author too (L20)', () => {
+  assert.deepEqual(hits('README.es.md', ES_README), [`13:name Por ${FIRST}.`]);
+  assert.deepEqual(hits('README.es.md', `## Author\n\n${FULL}\n`), [`3:name ${FULL}`], 'only the Spanish heading opens its author section');
+  assert.deepEqual(hits('README.md', `## Autor\n\n${FULL}\n`), [`3:name ${FULL}`], 'README.md keeps only its ## Author section');
+});
+
+test('README.es.md: the Ko-fi handle off the badge line is still a hit, and so is the name beside it (L20)', () => {
+  assert.equal(hits('README.es.md', `Apoyá en https://ko-fi.com/${HANDLE}.`).length, 1);
+  assert.equal(hits('README.es.md', `${ES_BADGES} por ${FIRST}`).length, 1, 'the name beside the handle on the badge line is a hit');
+});
+
 test('home paths: /home/<user> and /Users/<user> are hits, apart from the placeholder users you, u, m and ana', () => {
   assert.deepEqual(hits('docs/configuration.md', `"root": "${HOME}/you/Dev", "a": "${HOME}/u/x", "b": "${HOME}/m/y", "c": "${HOME}/ana/z"`), []);
   assert.deepEqual(hits('test/x.test.ts', `const a = '${HOME}/someone/Dev'; const b = '${USERS}/someone/Dev';`), [`1:home ${HOME}/someone`, `1:home ${USERS}/someone`]);
