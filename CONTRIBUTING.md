@@ -66,6 +66,18 @@ tracking the maintainer's private folders (feature documents and design artboard
 [rules that stay](docs/extending.md#6-rules-that-stay) (loopback only, Host and Origin checks, session token, folder
 confinement) apply to every change.
 
+## Gentle names in the code
+
+Mirador grew up next to the Gentle tools, so a few of their names show up in the code, the config and `doctor`. None
+of them is needed for the plain mode.
+
+| Name | What it is | What Mirador does with it |
+|------|------------|---------------------------|
+| gentle-ai | The Gentle setup tool for AI agents; it records the agents it configured in `~/.gentle-ai/state.json` (`GENTLE_AI_HOME` moves it). | Reads that file only: its `installed_agents` add agents to the agent picker, and the file's presence makes `mode: "auto"` pick the full mode. `pnpm run doctor` reports it. |
+| Engram | A local persistent-memory server that agents save their session summaries to. | Reads it at the config's `engramUrl` (`http://127.0.0.1:7437` by default) for the daily summary and [where it left off](docs/attention.md#where-it-left-off). Without it those views are empty, except where it left off for a folder where Claude Code ran in Mirador. |
+| gentle-deck | The internal name of the full mode (memory, night shift and Pi MCP), kept as the config value `mode: "gentle-deck"`. | Nothing on screen: the app is called Mirador in every mode. Where the old name stays and why: [The name gentle-deck in the code](#the-name-gentle-deck-in-the-code). |
+| `bin/herdr-shim` | A gentle-shell compatibility layer: gentle-shell reports what an agent is doing with `herdr pane report-metadata`, and the shim answers that command. It has no relation to the Herdr product ([herdr.dev](https://herdr.dev)); Mirador neither ships nor runs Herdr. | Agent terminals get `HERDR_BIN_PATH` pointing at the shim, which forwards each report as one JSON line to a Unix socket under `<runtime>/mirador/herdr/`, feeding the [attention inbox](docs/attention.md#attention-inbox). It prints nothing, always exits 0 and gives up after one second. |
+
 ## The name gentle-deck in the code
 
 The app is called Mirador in every mode. Its visible name lives in one place, `BRAND` in `public/mode-model.js`:

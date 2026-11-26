@@ -1,6 +1,7 @@
 // Public release T8: the community files a new contributor expects (code of conduct, issue and pull request
-// templates), GitHub Actions pinned by commit SHA and kept up to date by dependabot (L25), and a README
-// section on the Gentle names a reader meets in the code: gentle-ai, Engram, gentle-deck and bin/herdr-shim.
+// templates), GitHub Actions pinned by commit SHA and kept up to date by dependabot (L25), and a section on
+// the Gentle names a reader meets in the code: gentle-ai, Engram, gentle-deck and bin/herdr-shim, in
+// CONTRIBUTING.md since S30, linked from the README.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -69,12 +70,14 @@ test('every uses: in .github/workflows/*.yml is pinned to a 40-hex commit SHA wi
   assert.deepEqual(unpinned, []);
 });
 
-test('the README has a section that explains gentle-ai, Engram, gentle-deck and bin/herdr-shim, and lists it in the top links', () => {
-  const readme = read('README.md');
-  const body = section(readme, 'Gentle names in the code');
-  assert.ok(body, 'no "## Gentle names in the code" section');
+test('CONTRIBUTING.md has a section that explains gentle-ai, Engram, gentle-deck and bin/herdr-shim, and the README links it', () => {
+  const body = section(read('CONTRIBUTING.md'), 'Gentle names in the code');
+  assert.ok(body, 'no "## Gentle names in the code" section in CONTRIBUTING.md');
   for (const name of ['gentle-ai', 'Engram', 'gentle-deck', 'bin/herdr-shim']) assert.ok(body.includes(name), `the section does not name ${name}`);
-  assert.ok(readme.includes('[Gentle names](#gentle-names-in-the-code)'), 'the top links do not list the section');
+  const readme = read('README.md');
+  assert.equal(section(readme, 'Gentle names in the code'), '', 'the section left the README');
+  assert.ok(section(readme, 'Development').includes('[Gentle names](CONTRIBUTING.md#gentle-names-in-the-code)'), 'Development does not link the section');
+  assert.ok(section(readme, 'How Mirador compares').includes('[`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code)'), 'the Herdr paragraph does not link the section');
 });
 
 test('the README says what Mirador focuses on, not what other dashboards lack, and points to the ssh -L tunnel and its risks', () => {
@@ -93,5 +96,85 @@ test('the README compares Mirador with other tools without stars, prices or excl
   const table = section(read('README.md'), 'How Mirador compares');
   assert.ok(table, 'no "## How Mirador compares" section in README.md');
   assert.ok(!/[★⭐]|\$\d|\bstars\b|\bonly one\b|\bthe only\b|\bunique\b/i.test(table), 'stars, prices or an exclusivity claim in the comparison');
-  assert.match(table, /\| \*\*Mirador\*\* \|[^\n]*\| Apache-2\.0 \| No \|/, 'the Mirador row says Apache-2.0 and no worktrees');
+  // The data table has the tools as columns, Mirador first, inside <details>.
+  const details = table.slice(table.indexOf('<details>'), table.indexOf('</details>'));
+  assert.ok(table.indexOf('<details>') >= 0 && table.indexOf('</details>') > table.indexOf('<details>'), 'the data table is inside <details>');
+  assert.match(details, /^\| \| \*\*Mirador\*\* \| \[Herdr\]/m, 'the tools are the columns, Mirador first');
+  assert.match(details, /^\| License \| Apache-2\.0 \|/m, 'Mirador says Apache-2.0');
+  assert.match(details, /^\| Agents in git worktrees \| No \|/m, 'Mirador says no worktrees');
+  for (const row of ['Form', 'Platforms', 'License', 'Agents in git worktrees', 'Remote machines and phone']) assert.match(details, new RegExp(`^\\| ${row} \\|`, 'm'), row);
+  assert.ok(details.includes('A dash means its official pages do not say, and "No" means they say so'), 'what a dash and "No" mean');
+  // The "You want… | Look at" table comes first, with Mirador's rows on top.
+  const want = table.split('\n').filter((line) => line.startsWith('| ') && table.indexOf(line) < table.indexOf('<details>'));
+  assert.equal(want[0], '| You want… | Look at |');
+  const looks = want.slice(1).map((line) => line.split('|').at(-2)?.trim());
+  const firstOther = looks.findIndex((look) => look !== 'Mirador');
+  assert.ok(firstOther > 0 && looks.slice(firstOther).every((look) => look !== 'Mirador'), `Mirador's rows first: ${looks.join(', ')}`);
+  // L21: SSH and a phone app are separate rows, each from the verified cells (Paradev states no SSH, Emdash no phone app).
+  const look = (row: string) => table.split('\n').find((line) => line.startsWith(`| ${row} |`))?.split('|').at(-2) ?? '';
+  const ssh = look('Remote machines over SSH');
+  for (const tool of ['Herdr', 'cmux', 'Emdash', 'Claude Code Desktop']) assert.ok(ssh.includes(tool), `SSH: ${tool}`);
+  assert.ok(!ssh.includes('Paradev'), 'SSH: no Paradev');
+  const phone = look('A phone app');
+  for (const tool of ['Herdr', 'Paradev', 'Claude Code Desktop', 'cmux (iPhone beta)']) assert.ok(phone.includes(tool), `phone: ${tool}`);
+  assert.ok(!phone.includes('Emdash'), 'phone: no Emdash');
+  assert.ok(!look('A desktop app on Linux').includes('cmux') && !look('A desktop app on Windows').includes('cmux'), 'cmux is macOS only');
+  assert.ok(!look('A desktop app on Windows').includes('Paradev'), 'Paradev: Windows is not yet available');
+  // L22: Herdr's FAQ: "macOS (Apple silicon), Linux (x86_64 and arm64) and Windows (x86_64)."
+  assert.ok(look('A desktop app on macOS').includes('Herdr (Apple silicon)'), 'Herdr on macOS: Apple silicon');
+  for (const os of ['Linux', 'Windows']) assert.equal(tools(look(`A desktop app on ${os}`))[0], 'Herdr', `Herdr on ${os}`);
+  // L22: Mirador's rows say the need, in this order.
+  assert.deepEqual(wantRows(read('README.md')).filter((row) => row.look === 'Mirador').map((row) => row.want), [
+    'To see which agent is waiting for you, and where each project left off',
+    'Several agents on one machine without filling its memory: a launch gate, idle agents that sleep and, on Linux, one systemd scope per agent',
+    'Agents back in their folder and session after a reboot',
+    'A tool with no account and no telemetry, listening on 127.0.0.1 only',
+    'Any terminal agent or a plain shell, with native gentle-shell, pi and Engram integration',
+    'No desktop app to install: a browser window, also inside WSL2',
+  ]);
+  assert.ok(read('README.md').includes('- **Resource control:** a launch gate for memory, idle agents that sleep and, on Linux, one systemd scope per agent.\n'), 'the second benefit (L22)');
+  assert.ok(table.includes('[Herdr](https://herdr.dev) (Apache-2.0) does those today and Mirador does not'), 'the Herdr recommendation sits in the comparison');
+});
+
+/** The tool names of a "Look at" cell: top-level comma-separated, without parenthesised notes or backticks. */
+function tools(cell: string): string[] {
+  const names: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const char of `${cell},`) {
+    if (char === '(') depth += 1;
+    else if (char === ')') depth = Math.max(0, depth - 1);
+    else if (depth > 0) continue;
+    else if (char === ',') {
+      const name = current.replaceAll('`', '').trim();
+      if (name) names.push(name);
+      current = '';
+    } else current += char;
+  }
+  return names;
+}
+
+/** The body rows of the first table of the comparison section (the "You want… / Look at" one, before <details>). */
+function wantRows(readme: string): { want: string; look: string }[] {
+  const lines = readme.split('\n');
+  const start = lines.findIndex((line) => line === '## How Mirador compares' || line === '## Cómo se compara Mirador');
+  const header = lines.findIndex((line, index) => index > start && line.startsWith('| '));
+  const details = lines.findIndex((line, index) => index > start && line.startsWith('<details>'));
+  assert.ok(start >= 0 && header > start && header < details, 'the comparison section opens with a table before <details>');
+  const end = lines.findIndex((line, index) => index > header && line.trim() === '');
+  return lines.slice(header + 2, end).map((line) => {
+    const cells = line.split('|');
+    return { want: cells[1].trim(), look: cells.at(-2)?.trim() ?? '' };
+  });
+}
+
+test('README.md and README.es.md name the same tools in the "You want… / Look at" table, row by row (L22)', () => {
+  assert.deepEqual(tools('Herdr (iPhone, iPad, Android), cmux (`cmux ssh`)'), ['Herdr', 'cmux']);
+  const en = wantRows(read('README.md'));
+  const es = wantRows(read('README.es.md'));
+  assert.ok(en.length > 0, 'no rows in the English table');
+  assert.equal(es.length, en.length, 'the same number of rows');
+  en.forEach((row, index) => {
+    assert.deepEqual([...tools(es[index].look)].sort(), [...tools(row.look)].sort(), `row ${index + 1}: "${row.want}" / "${es[index].want}"`);
+  });
 });

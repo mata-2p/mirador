@@ -177,7 +177,10 @@ function pathAllowed(file: string, text: string, path: string): string | undefin
   return undefined;
 }
 
-/** The line numbers (1-based) of the README `## Author` section, its heading included. */
+/** The author section of each README: the English one (L12) and the Spanish one (L20). */
+const AUTHOR_HEADINGS: Record<string, string> = { 'README.md': '## Author', 'README.es.md': '## Autor' };
+
+/** The line numbers (1-based) of a README's author section, its heading included. */
 function sectionLines(lines: string[], heading: string): Set<number> {
   const inside = new Set<number>();
   let open = false;
@@ -205,6 +208,7 @@ function nameAllowed(file: string, text: string, lineNo: number, author: Set<num
   if (NAME_FILES[file]) return NAME_FILES[file];
   if (file === CREDIT_FILE && CREDIT_LINE.test(text)) return 'credits.by.name, the author credit (L12)';
   if (file === 'README.md' && author.has(lineNo)) return 'the README ## Author section (L12)';
+  if (file === 'README.es.md' && author.has(lineNo)) return 'the README.es.md ## Autor section (L20)';
   if (file === 'package.json' && AUTHOR_LINE.test(text)) return 'the package.json author field (L12)';
   return undefined;
 }
@@ -213,6 +217,7 @@ function nameAllowed(file: string, text: string, lineNo: number, author: Set<num
 function handlePlace(file: string, text: string): string | undefined {
   if (file === '.github/FUNDING.yml') return 'the Ko-fi handle in .github/FUNDING.yml (L13)';
   if (file === 'README.md' && BADGE_LINE.test(text) && KOFI_BADGE.test(text)) return 'the Ko-fi handle in the README badge line (L13)';
+  if (file === 'README.es.md' && BADGE_LINE.test(text) && KOFI_BADGE.test(text)) return 'the Ko-fi handle in the README.es.md badge line (L20)';
   return undefined;
 }
 
@@ -220,7 +225,8 @@ function handlePlace(file: string, text: string): string | undefined {
 export function scanText(file: string, content: string): Entry[] {
   const entries: Entry[] = [];
   const lines = content.split('\n');
-  const author = file === 'README.md' ? sectionLines(lines, '## Author') : new Set<number>();
+  const heading = AUTHOR_HEADINGS[file];
+  const author = heading ? sectionLines(lines, heading) : new Set<number>();
   lines.forEach((text, index) => {
     const line = index + 1;
     const add = (kind: Kind, match: string, allowed?: string) => entries.push(allowed ? { file, line, kind, match, allowed } : { file, line, kind, match });

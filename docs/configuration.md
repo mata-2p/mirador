@@ -1,6 +1,6 @@
 # Running and configuring Mirador
 
-The `mirador` commands, every key of `~/.config/mirador/config.json` and how Mirador picks a browser. The Quickstart is in the [README](../README.md#quickstart). Keys that belong to one feature are described with it: `launches` in [Opening many agents without filling the memory](agents.md#opening-many-agents-without-filling-the-memory), `scopes` in [One systemd scope per terminal](agents.md#one-systemd-scope-per-terminal), `attentionBridge` in [Attention inbox](attention.md#attention-inbox) and `gentleShellAgentDir` in [MCP servers per project](agents.md#mcp-servers-per-project).
+The `mirador` commands, every key of `~/.config/mirador/config.json` and how Mirador picks a browser. The Quickstart is in the [README](../README.md#quickstart), and the full install in [docs/install.md](install.md). Keys that belong to one feature are described with it: `launches` in [Opening many agents without filling the memory](agents.md#opening-many-agents-without-filling-the-memory), `scopes` in [One systemd scope per terminal](agents.md#one-systemd-scope-per-terminal), `attentionBridge` in [Attention inbox](attention.md#attention-inbox) and `gentleShellAgentDir` in [MCP servers per project](agents.md#mcp-servers-per-project).
 
 ## Use
 

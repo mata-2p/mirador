@@ -22,6 +22,10 @@ Known limits (each needs a process already running as you):
 - A workspace whose root is `/` puts every folder of the machine inside its root guard.
 - The runtime folder (`$XDG_RUNTIME_DIR/mirador`, or `~/.cache/mirador` without `XDG_RUNTIME_DIR`) is per user, not per Mirador: every Mirador you start shares it and its herdr socket folder, and any of your processes can read it.
 
+## What stays on the machine
+
+Zero telemetry, no accounts; the server listens on `127.0.0.1` only. That is Mirador, not the agents running inside it: Claude Code, pi or any other agent still talks to its own provider. In the full mode the night shift and **Improve with AI** send their prompts to Claude through pi, and the night shift writes to a Telegram bot only once you connect your own. For **Where it left off**, Mirador keeps your last message to Claude Code, its last answer and its compaction summary in plaintext under `~/.local/state/mirador/left-off/` (0600, 30 days by default, `leftOff: false` turns it off); they are never sent anywhere ([details](attention.md#where-it-left-off)).
+
 ## Opening Mirador from another machine
 
 The server listens on `127.0.0.1` only, and that does not change. To use a Mirador that runs on one machine (the host) from the browser of another (the client), forward its port through an SSH tunnel. Read the risks below first: the tunnel gives the client a way into terminals on the host.
