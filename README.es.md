@@ -2,17 +2,17 @@
 
 # Mirador
 
-Mirador es un dashboard web local que sigue a los agentes de programación que corren en tu máquina, carpeta por carpeta, para que puedas tener varios a la vez sin perderle el hilo a ninguno.
+Mirador es un dashboard web local para correr muchos agentes de programación en una máquina Linux o WSL2 sin llenar su memoria. Retiene a los agentes abiertos seguidos hasta que hay memoria libre, deja dormidos tras un reinicio a los que habían terminado y muestra dónde quedó cada proyecto.
 
+- **Memoria:** una compuerta de arranque para los agentes abiertos seguidos; los agentes Pi que llevan 4 h con su turno terminado se duermen ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), y tras un reinicio todo agente que había terminado sigue dormido; en Linux, un scope de systemd por agente.
 - **Dónde quedó:** cada proyecto muestra dónde se detuvo su última sesión.
-- **Control de recursos:** una compuerta de arranque según la memoria, agentes inactivos que se duermen y, en Linux, un scope de systemd por agente.
 - **Se queda en la máquina:** sin telemetría, sin cuentas, el servidor escucha solo en 127.0.0.1.
 
 [![test](https://github.com/mata-2p/mirador/actions/workflows/test.yml/badge.svg)](https://github.com/mata-2p/mirador/actions/workflows/test.yml) [![GitHub Sponsors](https://img.shields.io/github/sponsors/mata-2p)](https://github.com/sponsors/mata-2p) [![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/matiasjbarriah) [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
 [English](README.md) · Español
 
-[Por qué Mirador](#por-qué-mirador) · [Inicio rápido](#inicio-rápido) · [Qué hace](#qué-hace) · [Cómo se compara Mirador](#cómo-se-compara-mirador) · [Cómo funciona](#cómo-funciona) · [Configuración](#configuración) · [Desarrollo](#desarrollo) · [Guía de instalación](docs/install.md)
+[Por qué Mirador](#por-qué-mirador) · [Inicio rápido](#inicio-rápido) · [Qué hace](#qué-hace) · [Cada agente](#qué-hace-mirador-con-cada-agente) · [Cómo se compara Mirador](#cómo-se-compara-mirador) · [Cómo funciona](#cómo-funciona) · [Configuración](#configuración) · [Desarrollo](#desarrollo) · [Guía de instalación](docs/install.md)
 
 ![Un recorrido corto por Mirador en un workspace de demostración inventado, con los proyectos acme-api, acme-web y field-notes](docs/img/demo.gif)
 
@@ -20,12 +20,9 @@ Mirador es un dashboard web local que sigue a los agentes de programación que c
 
 En qué se enfoca Mirador:
 
+- **Memoria.** Abrir 11 agentes a la vez llenó 24 GB de RAM y la swap, y systemd-oomd mató agentes y la ventana de Mirador. Por eso una [compuerta de arranque](docs/agents.md#opening-many-agents-without-filling-the-memory) retiene a los agentes abiertos seguidos mientras MemAvailable está bajo la reserva, los agentes Pi que llevan 4 h con su turno terminado se duermen ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), y tras un reinicio todo agente que había terminado sigue dormido, y en Linux cada agente tiene [un scope de systemd](docs/agents.md#one-systemd-scope-per-terminal), así que una muerte por falta de memoria se lleva un agente.
 - **Dónde quedó.** Cada proyecto muestra dónde se detuvo su última sesión, desde Engram o los últimos mensajes de Claude Code ([detalles](docs/attention.md#where-it-left-off)); una [vista de seguimiento](docs/attention.md#tracking-view) acompaña el día.
-- **Control de recursos.** [Un scope de systemd por agente](docs/agents.md#one-systemd-scope-per-terminal) (Linux), una [compuerta de arranque](docs/agents.md#opening-many-agents-without-filling-the-memory) que espera memoria libre, [agentes inactivos que se duermen](docs/agents.md#sleeping-agents-lazy-restore) y [servidores MCP por proyecto](docs/agents.md#mcp-servers-per-project).
-- **De vuelta tras un reinicio.** Los agentes [vuelven](docs/agents.md#reopening-agents-after-a-restart) a su carpeta y, con gentle-shell, pi, Claude Code, opencode o Antigravity, a su sesión.
-- **Mirador mismo se queda en la máquina.** Cero telemetría, sin cuentas, y el servidor escucha solo en `127.0.0.1` ([qué sale de la máquina y qué guarda](docs/security.md#what-stays-on-the-machine), en inglés).
-- **Una ventana del navegador.** No necesita GPU, Vulkan ni sesión de escritorio, y dentro de WSL2 se abre en el navegador de Windows ([detalles](docs/configuration.md#browser)).
-- **Integración nativa con gentle-shell, pi y Engram**, y cualquier agente de terminal o un `bash` simple también funcionan ([modos](docs/install.md#modes)).
+- **Para quienes usan gentle-shell.** Un [turno de noche](docs/extending.md#night-shift) cuyo piloto automático responde las preguntas de los agentes mientras no estás, y [servidores MCP por proyecto](docs/agents.md#mcp-servers-per-project) para apagar los que una carpeta no necesita.
 
 La vista de seguimiento, y después la bandeja de atención y el panel **Dónde quedó** de una carpeta, en el workspace de demostración; cada una se abre a tamaño completo:
 
@@ -69,20 +66,36 @@ Un panel local para las carpetas de tus proyectos, con terminales de agentes ade
 | [Bandeja de atención](docs/attention.md#attention-inbox) | **Te esperan (N)** lista las terminales de agentes que necesitan tu respuesta o terminaron su turno. |
 | [Un scope de systemd por terminal](docs/agents.md#one-systemd-scope-per-terminal) | En Linux cada terminal corre en su propio scope de usuario de systemd, así que una muerte por falta de memoria se lleva una terminal, no todas. |
 | [Compuerta de arranque según la memoria](docs/agents.md#opening-many-agents-without-filling-the-memory) | Los agentes abiertos seguidos arrancan en tandas y esperan mientras la memoria libre está bajo la reserva. |
-| [Agentes dormidos](docs/agents.md#sleeping-agents-lazy-restore) | Después de un reinicio, los agentes que habían terminado su turno duermen sin proceso hasta que los despiertas. |
+| [Agentes dormidos](docs/agents.md#sleeping-agents-lazy-restore) | Después de un reinicio, todo agente que había terminado su turno duerme sin proceso hasta que lo despiertas; mientras Mirador corre, un agente Pi que lleva `idleSleepHours` (4 h por defecto) con su turno terminado guarda el resumen de su sesión y también se duerme, lo que necesita el puente de gentle-shell y una sesión de pi registrada ([idle sleep](docs/resources.md#idle-sleep)). |
 | [Reabrir tras un reinicio](docs/agents.md#reopening-agents-after-a-restart) | Los agentes abiertos vuelven en el siguiente arranque, en su carpeta y, con gentle-shell, pi, Claude Code, opencode o Antigravity, en su sesión. |
 | [Abrir varios agentes](docs/agents.md#opening-several-agents) | Marca carpetas en el modo de selección, o guárdalas como los proyectos del workspace, y abre un agente en cada una. |
 | [Servidores MCP por proyecto](docs/agents.md#mcp-servers-per-project) | Apaga los servidores MCP que una carpeta no necesita, lo que ahorra memoria en cada agente que se abre ahí. |
-| [Ventana del navegador](docs/configuration.md#browser) | Un navegador de la familia Chromium abre Mirador como ventana de aplicación; cualquier otro navegador recibe una pestaña, y la clave `browser` cambia la elección. |
+| [Ventana del navegador](docs/configuration.md#browser) | Un navegador de la familia Chromium abre Mirador como ventana de aplicación, sin necesitar GPU, Vulkan ni sesión de escritorio; cualquier otro navegador recibe una pestaña, la clave `browser` cambia la elección, y dentro de WSL2 se abre en el navegador de Windows. |
 | [Cambios](docs/features.md#what-it-does) | **Cambios** muestra los cambios de una carpeta o de un workspace respecto de su último commit, preparados y sin preparar juntos, con el diff de cada archivo coloreado por línea; solo lee el repositorio. |
 | [Avisos del navegador](docs/attention.md#attention-inbox) | Apagados hasta que haces clic en **Activar avisos del navegador** en la bandeja; desde entonces, un agente que empieza a esperarte o se detiene con un error muestra un aviso del navegador, con el ícono de Mirador, el proyecto y el motivo como título y la pregunta, el agente y la ruta en el cuerpo (puede llegar hasta 1,5 s después de la tarjeta, y 3 o más en 1,5 s comparten un aviso; un modo discreto oculta los detalles), y los turnos terminados nunca avisan. |
-| [Turno de noche](docs/attention.md#tracking-view) | En el modo completo, el **Piloto automático** responde las preguntas de los agentes mientras no estás, según un horario o encendido a mano, te deja las acciones sensibles y registra cada paso en la vista de seguimiento. |
+| [Turno de noche](docs/extending.md#night-shift) | En el modo completo, el **Piloto automático** responde las preguntas de los agentes mientras no estás, según un horario o encendido a mano, te deja las acciones sensibles y registra cada paso en la vista de seguimiento. |
 | [Editor de archivos](docs/features.md#file-editor) | **Archivos** edita los archivos de texto de una carpeta, primero los archivos dotenv, y pregunta antes de sobrescribir el cambio de un agente. |
-| [Seguridad](docs/security.md#security) | El servidor escucha solo en `127.0.0.1` y revisa un token de sesión, el encabezado `Host` y, en cada cambio, el `Origin` propio de la aplicación. |
+| [Seguridad](docs/security.md#security) | Sin telemetría y sin cuenta; el servidor escucha solo en `127.0.0.1` y revisa un token de sesión, el encabezado `Host` y, en cada cambio, el `Origin` propio de la aplicación ([qué se queda en la máquina](docs/security.md#what-stays-on-the-machine)). |
 
 Para abrir Mirador desde otra máquina, reenvía su puerto con `ssh -L` después de leer los riesgos: [Opening Mirador from another machine](docs/security.md#opening-mirador-from-another-machine).
 
 Los workspaces, el árbol de carpetas, las terminales como pestañas o en grilla, el resumen diario, los ajustes del turno de noche y los perfiles de recursos están en [docs/features.md](docs/features.md). Para contribuir: [CONTRIBUTING.md](CONTRIBUTING.md); para reportar una vulnerabilidad: [SECURITY.md](SECURITY.md).
+
+## Qué hace Mirador con cada agente
+
+Los agentes que Mirador conoce, desde [`src/agents/catalog.ts`](src/agents/catalog.ts), en su orden; también se abren un `bash` simple y cualquier `agentCommand` que configures ([modos](docs/install.md#modes), en inglés). Un agente que informa su estado recibe las tarjetas de te espera y de terminado.
+
+| Agente | Comando | Informa su estado | Retoma su sesión tras un reinicio | Se duerme si está inactivo |
+|---|---|---|---|---|
+| Pi (gentle-shell) | `gentle-shell` | Sí | `--session <file>` | Sí |
+| Claude Code | `claude` | Sí | `--resume <id>` | Tras un reinicio |
+| opencode | `opencode` | Sí | `--session <id>` | Tras un reinicio |
+| Antigravity | `agy` | Sí | `--conversation <id>` | Tras un reinicio |
+| Codex | `codex` | No | No, empieza de cero | No |
+| Gemini CLI | `gemini` | No | No, empieza de cero | No |
+| Kimi | `kimi` | No | No, empieza de cero | No |
+
+Solo se duerme un agente que informa que terminó su turno, así que los que no informan nada se reabren en cada arranque. Los agentes Pi también se duermen mientras Mirador corre ([idle sleep](docs/resources.md#idle-sleep), en inglés); los demás, solo tras un reinicio ([sleeping agents](docs/agents.md#sleeping-agents-lazy-restore)).
 
 ## Cómo se compara Mirador
 
@@ -90,40 +103,43 @@ Otras herramientas también corren agentes de programación lado a lado.
 
 | Quieres… | Mira |
 |---|---|
-| Ver qué agente te está esperando y dónde quedó cada proyecto | Mirador |
-| Varios agentes en una máquina sin llenar su memoria: una compuerta de arranque, agentes inactivos que se duermen y, en Linux, un scope de systemd por agente | Mirador |
-| Agentes de vuelta en su carpeta y su sesión tras un reinicio | Mirador |
-| Una herramienta sin cuenta y sin telemetría, que escucha solo en 127.0.0.1 | Mirador |
-| Cualquier agente de terminal o una shell simple, con integración nativa con gentle-shell, pi y Engram | Mirador |
-| Sin app de escritorio que instalar: una ventana del navegador, también dentro de WSL2 | Mirador |
-| Máquinas remotas por SSH | Herdr, cmux (`cmux ssh`), Emdash (SSH/SFTP), Claude Code Desktop |
-| Una app para el teléfono | Herdr (iPhone, iPad, Android), Paradev (Apple, Android), Claude Code Desktop (app móvil de Claude), cmux (iPhone beta) |
+| Ver qué agente te está esperando | Mirador, Herdr, Paradev, cmux, Emdash |
+| Dónde quedó cada proyecto | Mirador |
+| Agentes de vuelta en su sesión tras un reinicio | Mirador, Herdr TUI (activado por defecto), cmux (agentes cuyos hooks guardaron una sesión) |
+| Agentes abiertos seguidos que esperan memoria libre, un scope de systemd por agente, y que tras un reinicio solo se reabran los que no habían terminado | Mirador |
+| Agentes inactivos dormidos para liberar memoria | Mirador (los agentes Pi que llevan 4 h con su turno terminado se duermen ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), y tras un reinicio todo agente que había terminado sigue dormido), cmux (`terminal.agentHibernation`, opcional), Herdr TUI (plugins de la comunidad) |
+| Un turno de noche y servidores MCP por proyecto para gentle-shell | Mirador |
+| Máquinas remotas por SSH | Herdr TUI, Herdr app, cmux (`cmux ssh`), Emdash (SSH/SFTP), Claude Code Desktop |
+| Una app para el teléfono | Herdr app (iPhone, iPad, Android), Paradev (Apple, Android), Claude Code Desktop (app móvil de Claude), cmux (iPhone beta) |
 | Agentes en worktrees de git | Paradev, Emdash, Claude Code Desktop (por sesión, apagados por defecto) |
-| Una app de escritorio en macOS | Herdr (Apple silicon), Paradev, Claude Code Desktop, cmux (app de terminal), Emdash |
-| Una app de escritorio en Linux | Herdr, Paradev, Claude Code Desktop (beta), Emdash |
-| Una app de escritorio en Windows | Herdr, Claude Code Desktop, Emdash |
+| Una app de escritorio en macOS | Herdr app (Apple silicon), Paradev, Claude Code Desktop, cmux (app de terminal), Emdash |
+| Una app de escritorio en Linux | Herdr app, Paradev, Claude Code Desktop (beta), Emdash |
+| Una app de escritorio en Windows | Herdr app, Claude Code Desktop, Emdash |
 | Una interfaz de terminal en un solo binario de Rust para macOS, Linux y Windows | Herdr TUI |
 
-Si necesitas máquinas remotas por SSH, una app para el teléfono o un solo binario de Rust (Herdr TUI, junto a su app de escritorio nativa), [Herdr](https://herdr.dev) (Apache-2.0) hace eso hoy y Mirador no. Mirador no tiene relación con Herdr: los nombres `herdr` en su código son una capa de compatibilidad con gentle-shell ([`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code)), y Mirador no incluye ni corre Herdr.
+Herdr conviene si trabajas con varias máquinas, desde el teléfono o en macOS o Windows; Mirador conviene si todo corre en una máquina Linux o WSL2 y el límite es la memoria. Herdr cerró [herdrdev/herdr#6152](https://github.com/herdrdev/herdr/issues/6152) ("Add confirmation and a cap for large agent restores", pedir confirmación y un tope al restaurar muchos agentes) como "not planned" el 23-11-2026. Mirador no tiene relación con Herdr: los nombres `herdr` en su código son una capa de compatibilidad con gentle-shell ([`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code)), y Mirador no incluye ni corre Herdr.
 
 <details>
 <summary>Lo que decía el sitio o repositorio de cada herramienta el 2026-11-26</summary>
 
 La tabla muestra lo que decía el sitio o repositorio propio de cada una el 2026-11-26. Una raya significa que sus páginas oficiales no lo dicen, y "No" significa que dicen que no; el sitio de cada proyecto es la fuente de verdad y las cosas cambian.
 
-| | **Mirador** | [Herdr](https://herdr.dev) | [Paradev](https://paradev.com) | [Claude Code Desktop](https://code.claude.com/docs/en/desktop) | [cmux](https://github.com/manaflow-ai/cmux) | [Emdash](https://github.com/generalaction/emdash) (Classic) |
-|---|---|---|---|---|---|---|
-| Forma | Panel web¹ | App de escritorio, TUI² | App de escritorio³ | App de escritorio⁴ | App de terminal⁵ | App de escritorio |
-| Plataformas | Linux, WSL2, macOS¹ | macOS², Linux, Windows | macOS, Linux³ | macOS, Windows, Linux beta⁴ | Solo macOS⁵ | macOS, Windows, Linux |
-| Licencia | Apache-2.0 | Apache-2.0 | MIT | — | GPL-3.0-or-later⁵ | Apache-2.0 |
-| Agentes en worktrees de git | No | — | Sí | Opcional⁴ | — | Sí |
-| Máquinas remotas y teléfono | [Túnel `ssh -L`](docs/security.md#opening-mirador-from-another-machine)¹ | SSH, apps móviles² | Teléfono, nube³ | SSH, nube, teléfono⁴ | SSH, iPhone beta⁵ | SSH/SFTP |
+| | **Mirador** | [Herdr TUI](https://github.com/herdrdev/herdr) | [Herdr app](https://herdr.dev) | [Paradev](https://paradev.com) | [Claude Code Desktop](https://code.claude.com/docs/en/desktop) | [cmux](https://github.com/manaflow-ai/cmux) | [Emdash](https://github.com/generalaction/emdash) (Classic) |
+|---|---|---|---|---|---|---|---|
+| Forma | Panel web¹ | App de terminal² | App de escritorio³ | App de escritorio⁴ | App de escritorio⁵ | App de terminal⁶ | App de escritorio |
+| Plataformas | Linux, WSL2, macOS¹ | macOS, Linux, Windows beta² | macOS³, Linux, Windows | macOS, Linux⁴ | macOS, Windows, Linux beta⁵ | Solo macOS⁶ | macOS, Windows, Linux |
+| Licencia | Apache-2.0 | Apache-2.0 | Apache-2.0 | MIT | — | GPL-3.0-or-later⁶ | Apache-2.0 |
+| Agentes en worktrees de git | No | — | — | Sí | Opcional⁵ | — | Sí |
+| Máquinas remotas y teléfono | [Túnel `ssh -L`](docs/security.md#opening-mirador-from-another-machine)¹ | SSH | SSH, apps móviles³ | Teléfono, nube⁴ | SSH, nube, teléfono⁵ | SSH, iPhone beta⁶ | SSH/SFTP |
+| Sesiones de agentes tras un reinicio | Retomadas¹ | Activado por defecto² | No³ | — | — | Con hooks⁶ | — |
+| Agentes inactivos dormidos | Agentes Pi¹ | Plugins² | — | — | — | Opcional⁶ | — |
 
-¹ Mirador: un panel web local en una ventana del navegador; macOS es experimental; sin app, pero la bandeja se puede usar en el navegador del teléfono a través del mismo túnel ([experimental](docs/attention.md#the-phone-inbox-is-experimental)).<br>
-² Herdr: una app de escritorio nativa más Herdr TUI en la terminal, un solo binario de Rust para macOS, Linux y Windows; macOS en Apple silicon; apps para iPhone, iPad y Android.<br>
-³ Paradev: también una CLI, un SDK y un servidor MCP; "Windows is not yet available" (Windows aún no está disponible); la app para el teléfono es para dispositivos Apple y Android.<br>
-⁴ Claude Code Desktop: la pestaña Code de la app de escritorio de Claude; Linux beta para Ubuntu y Debian; worktrees por sesión, apagados por defecto; sesiones en la nube en claude.ai/code o en la app móvil de Claude, y una sesión local aparece en tus otros dispositivos con Remote Control en las apps de Claude.<br>
-⁵ cmux: una app de terminal nativa de macOS, solo macOS por ahora; partes del servidor bajo BUSL-1.1; SSH con `cmux ssh`; la app para iPhone está en beta en TestFlight.
+¹ Mirador: un panel web local en una ventana del navegador; macOS es experimental; sin app, pero la bandeja se puede usar en el navegador del teléfono a través del mismo túnel ([experimental](docs/attention.md#the-phone-inbox-is-experimental)); tras un reinicio los agentes de gentle-shell, pi, Claude Code, opencode y Antigravity retoman su sesión y los demás empiezan de cero en su carpeta; los agentes Pi se duermen tras `idleSleepHours` (4 h por defecto) con su turno terminado, y tras un reinicio todo agente que había terminado sigue dormido.<br>
+² Herdr TUI: un solo binario de Rust en la terminal; Windows está en beta; "Native agent session restore is enabled by default" (la restauración nativa de sesiones de agentes está activada por defecto; `[session] resume_agents_on_restore`, [session state](https://herdr.dev/docs/session-state/)); los agentes inactivos se duermen solo con plugins de la comunidad como herdr-idle y herdr-hibernate ([plugins](https://herdr.dev/tui/plugins/)).<br>
+³ Herdr app: una app de escritorio nativa ([herdrdev/herdr-app](https://github.com/herdrdev/herdr-app)); macOS en Apple silicon; apps para iPhone, iPad y Android; tras un reinicio sus paneles vuelven como una shell, porque el FAQ dice que "doesn't restart an agent or resume its work in progress" (no reinicia un agente ni retoma su trabajo en curso).<br>
+⁴ Paradev: también una CLI, un SDK y un servidor MCP; "Windows is not yet available" (Windows aún no está disponible); la app para el teléfono es para dispositivos Apple y Android.<br>
+⁵ Claude Code Desktop: la pestaña Code de la app de escritorio de Claude; Linux beta para Ubuntu y Debian; worktrees por sesión, apagados por defecto; sesiones en la nube en claude.ai/code o en la app móvil de Claude, y una sesión local aparece en tus otros dispositivos con Remote Control en las apps de Claude.<br>
+⁶ cmux: una app de terminal nativa de macOS, solo macOS por ahora; partes del servidor bajo BUSL-1.1; SSH con `cmux ssh`; la app para iPhone está en beta en TestFlight; "Supported agent sessions can resume when hooks have saved a native session ID" (las sesiones de agentes compatibles pueden retomarse cuando los hooks guardaron un ID de sesión nativo); `terminal.agentHibernation` mata los procesos de agentes inactivos en segundo plano para liberar RAM y CPU y los retoma después, apagado por defecto para la hibernación de rutina, aunque con presión de memoria crítica puede hibernar incluso apagado.
 
 </details>
 
