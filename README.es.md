@@ -2,7 +2,7 @@
 
 # Mirador
 
-Mirador es un dashboard web local para correr muchos agentes de programación en una máquina Linux o WSL2 sin llenar su memoria. Retiene a los agentes abiertos seguidos hasta que hay memoria libre, deja dormidos tras un reinicio a los que habían terminado y muestra dónde quedó cada proyecto.
+Mirador es un dashboard web local para correr muchos agentes de programación en una máquina Linux o WSL2 sin llenar su memoria. Cuando abres varios agentes de una vez, los inicia por lotes y espera a que haya memoria libre, deja dormidos tras un reinicio a los que habían terminado y muestra dónde quedó cada proyecto.
 
 - **Memoria:** una compuerta de arranque para los agentes abiertos seguidos; los agentes Pi que llevan 4 h con su turno terminado se duermen ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), y tras un reinicio todo agente que había terminado sigue dormido; en Linux, un scope de systemd por agente.
 - **Dónde quedó:** cada proyecto muestra dónde se detuvo su última sesión.
@@ -20,7 +20,7 @@ Mirador es un dashboard web local para correr muchos agentes de programación en
 
 En qué se enfoca Mirador:
 
-- **Memoria.** Abrir 11 agentes a la vez llenó 24 GB de RAM y la swap, y systemd-oomd mató agentes y la ventana de Mirador. Por eso una [compuerta de arranque](docs/agents.md#opening-many-agents-without-filling-the-memory) retiene a los agentes abiertos seguidos mientras MemAvailable está bajo la reserva, los agentes Pi que llevan 4 h con su turno terminado se duermen ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), y tras un reinicio todo agente que había terminado sigue dormido, y en Linux cada agente tiene [un scope de systemd](docs/agents.md#one-systemd-scope-per-terminal), así que una muerte por falta de memoria se lleva un agente.
+- **Memoria.** Antes de la compuerta de arranque, abrir 11 agentes de una vez llenó 24 GB de RAM y la swap, y systemd-oomd mató agentes y la ventana de Mirador. Ahora una [compuerta de arranque](docs/agents.md#opening-many-agents-without-filling-the-memory) retiene a los agentes abiertos seguidos mientras MemAvailable está bajo la reserva. Los agentes Pi que llevan 4 h con su turno terminado se duermen ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), y tras un reinicio todo agente que había terminado sigue dormido; en Linux cada agente tiene [un scope de systemd](docs/agents.md#one-systemd-scope-per-terminal), así que una muerte por falta de memoria se lleva un agente.
 - **Dónde quedó.** Cada proyecto muestra dónde se detuvo su última sesión, desde Engram o los últimos mensajes de Claude Code ([detalles](docs/attention.md#where-it-left-off)); una [vista de seguimiento](docs/attention.md#tracking-view) acompaña el día.
 - **Para quienes usan gentle-shell.** Un [turno de noche](docs/extending.md#night-shift) cuyo piloto automático responde las preguntas de los agentes mientras no estás, y [servidores MCP por proyecto](docs/agents.md#mcp-servers-per-project) para apagar los que una carpeta no necesita.
 
@@ -85,12 +85,12 @@ Los workspaces, el árbol de carpetas, las terminales como pestañas o en grilla
 
 Los agentes que Mirador conoce, desde [`src/agents/catalog.ts`](src/agents/catalog.ts), en su orden; también se abren un `bash` simple y cualquier `agentCommand` que configures ([modos](docs/install.md#modes), en inglés). Un agente que informa su estado recibe las tarjetas de te espera y de terminado.
 
-| Agente | Comando | Informa su estado | Retoma su sesión tras un reinicio | Se duerme si está inactivo |
+| Agente | Comando | Informa su estado | Retoma su sesión tras un reinicio | Se duerme |
 |---|---|---|---|---|
-| Pi (gentle-shell) | `gentle-shell` | Sí | `--session <file>` | Sí |
-| Claude Code | `claude` | Sí | `--resume <id>` | Tras un reinicio |
-| opencode | `opencode` | Sí | `--session <id>` | Tras un reinicio |
-| Antigravity | `agy` | Sí | `--conversation <id>` | Tras un reinicio |
+| Pi (gentle-shell) | `gentle-shell` | Sí | `--session <file>` | Tras 4 h inactivo, y tras un reinicio |
+| Claude Code | `claude` | Sí | `--resume <id>` | Solo tras un reinicio |
+| opencode | `opencode` | Sí | `--session <id>` | Solo tras un reinicio |
+| Antigravity | `agy` | Sí | `--conversation <id>` | Solo tras un reinicio |
 | Codex | `codex` | No | No, empieza de cero | No |
 | Gemini CLI | `gemini` | No | No, empieza de cero | No |
 | Kimi | `kimi` | No | No, empieza de cero | No |
@@ -117,7 +117,7 @@ Otras herramientas también corren agentes de programación lado a lado.
 | Una app de escritorio en Windows | Herdr app, Claude Code Desktop, Emdash |
 | Una interfaz de terminal en un solo binario de Rust para macOS, Linux y Windows | Herdr TUI |
 
-Herdr conviene si trabajas con varias máquinas, desde el teléfono o en macOS o Windows; Mirador conviene si todo corre en una máquina Linux o WSL2 y el límite es la memoria. Herdr cerró [herdrdev/herdr#6152](https://github.com/herdrdev/herdr/issues/6152) ("Add confirmation and a cap for large agent restores", pedir confirmación y un tope al restaurar muchos agentes) como "not planned" el 23-11-2026. Mirador no tiene relación con Herdr: los nombres `herdr` en su código son una capa de compatibilidad con gentle-shell ([`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code)), y Mirador no incluye ni corre Herdr.
+Herdr conviene si trabajas con varias máquinas, desde el teléfono o en macOS o Windows; Mirador conviene si todo corre en una máquina Linux o WSL2 y el límite es la memoria. Herdr cerró [herdrdev/herdr#6152](https://github.com/herdrdev/herdr/issues/6152) ("Add confirmation and a cap for large agent restores", pedir confirmación y un tope al restaurar muchos agentes) como "not planned" el 23-11-2026 y derivó la propuesta a sus discusiones de Ideas; en Herdr TUI, `[session] resume_agents_on_restore = false` apaga la reanudación automática de agentes y conserva la disposición. Mirador no tiene relación con Herdr: los nombres `herdr` en su código son una capa de compatibilidad con gentle-shell ([`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code)), y Mirador no incluye ni corre Herdr.
 
 <details>
 <summary>Lo que decía el sitio o repositorio de cada herramienta el 2026-11-26</summary>

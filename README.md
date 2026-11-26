@@ -2,7 +2,7 @@
 
 # Mirador
 
-Mirador is a local web dashboard for running many coding agents on one Linux or WSL2 machine without filling its memory. It holds back agents opened in a row until there is free memory, leaves finished ones asleep after a restart, and shows where each project left off.
+Mirador is a local web dashboard for running many coding agents on one Linux or WSL2 machine without filling its memory. When you open several agents at once, it starts them in batches and waits for free memory, leaves finished ones asleep after a restart, and shows where each project left off.
 
 - **Memory:** a launch gate for agents opened in a row; Pi agents finished for 4 h go to sleep ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), and after a restart every finished agent stays asleep; on Linux, one systemd scope per agent.
 - **Where it left off:** each project shows where its last session stopped.
@@ -20,7 +20,7 @@ English · [Español](README.es.md)
 
 What Mirador focuses on:
 
-- **Memory.** Opening 11 agents at once filled 24 GB of RAM and the swap, and systemd-oomd killed agents and the Mirador window. So a [launch gate](docs/agents.md#opening-many-agents-without-filling-the-memory) holds agents opened in a row while MemAvailable is under the reserve, Pi agents finished for 4 h go to sleep ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), and after a restart every finished agent stays asleep, and on Linux each agent gets [one systemd scope](docs/agents.md#one-systemd-scope-per-terminal), so an out-of-memory kill takes one agent.
+- **Memory.** Before the launch gate, opening 11 agents at once filled 24 GB of RAM and the swap, and systemd-oomd killed agents and the Mirador window. Now a [launch gate](docs/agents.md#opening-many-agents-without-filling-the-memory) holds agents opened in a row while MemAvailable is under the reserve. Pi agents finished for 4 h go to sleep ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), and after a restart every finished agent stays asleep; on Linux each agent gets [one systemd scope](docs/agents.md#one-systemd-scope-per-terminal), so an out-of-memory kill takes one agent.
 - **Where it left off.** Each project shows where its last session stopped, from Engram or Claude Code's last messages ([details](docs/attention.md#where-it-left-off)); a [tracking view](docs/attention.md#tracking-view) follows the day.
 - **For gentle-shell users.** A [night shift](docs/extending.md#night-shift) whose autopilot answers agents' questions while you are away, and [MCP servers per project](docs/agents.md#mcp-servers-per-project) to turn off the ones a folder does not need.
 
@@ -85,12 +85,12 @@ Workspaces, the folder tree, terminals as tabs or a grid, the daily summary, the
 
 The agents Mirador knows, from [`src/agents/catalog.ts`](src/agents/catalog.ts), in its order; a plain `bash` and any `agentCommand` you configure open too ([modes](docs/install.md#modes)). An agent that reports its state gets the waiting-for-you and finished cards.
 
-| Agent | Command | Reports its state | Resumes its session after a restart | Sleeps when idle |
+| Agent | Command | Reports its state | Resumes its session after a restart | Sleeps |
 |---|---|---|---|---|
-| Pi (gentle-shell) | `gentle-shell` | Yes | `--session <file>` | Yes |
-| Claude Code | `claude` | Yes | `--resume <id>` | After a restart |
-| opencode | `opencode` | Yes | `--session <id>` | After a restart |
-| Antigravity | `agy` | Yes | `--conversation <id>` | After a restart |
+| Pi (gentle-shell) | `gentle-shell` | Yes | `--session <file>` | After 4 h idle, and after a restart |
+| Claude Code | `claude` | Yes | `--resume <id>` | Only after a restart |
+| opencode | `opencode` | Yes | `--session <id>` | Only after a restart |
+| Antigravity | `agy` | Yes | `--conversation <id>` | Only after a restart |
 | Codex | `codex` | No | No, starts fresh | No |
 | Gemini CLI | `gemini` | No | No, starts fresh | No |
 | Kimi | `kimi` | No | No, starts fresh | No |
@@ -117,7 +117,7 @@ Other tools run coding agents side by side too.
 | A desktop app on Windows | Herdr app, Claude Code Desktop, Emdash |
 | A terminal UI in one Rust binary for macOS, Linux and Windows | Herdr TUI |
 
-Herdr fits if you work across several machines, from your phone, or on macOS or Windows; Mirador fits if everything runs on one Linux or WSL2 machine and memory is the limit. Herdr closed [herdrdev/herdr#6152](https://github.com/herdrdev/herdr/issues/6152) ("Add confirmation and a cap for large agent restores") as not planned on 2026-11-23. Mirador has no relation to Herdr: the `herdr` names in its code are a gentle-shell compatibility layer ([`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code)), and Mirador neither ships nor runs Herdr.
+Herdr fits if you work across several machines, from your phone, or on macOS or Windows; Mirador fits if everything runs on one Linux or WSL2 machine and memory is the limit. Herdr closed [herdrdev/herdr#6152](https://github.com/herdrdev/herdr/issues/6152) ("Add confirmation and a cap for large agent restores") as not planned on 2026-11-23 and pointed the proposal to its Ideas discussions; in Herdr TUI, `[session] resume_agents_on_restore = false` turns off automatic agent resume and keeps the layout. Mirador has no relation to Herdr: the `herdr` names in its code are a gentle-shell compatibility layer ([`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code)), and Mirador neither ships nor runs Herdr.
 
 <details>
 <summary>What each tool's own site or repository said on 2026-11-26</summary>

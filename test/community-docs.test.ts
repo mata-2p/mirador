@@ -150,10 +150,11 @@ test('the README compares Mirador with other tools without stars, prices or excl
   assert.ok(look('Agents back in their session after a restart').includes('Herdr TUI (on by default)'), 'Herdr TUI restores by default (L3)');
   assert.ok(look('Idle agents put to sleep to free memory').includes('cmux (`terminal.agentHibernation`, opt-in)'), 'cmux hibernation is opt-in (L3)');
   assert.ok(!/18 agents/.test(table), 'no "18 agents" figure (L3)');
-  // S5: when each one fits, with herdrdev/herdr#6152 and its date.
-  assert.ok(table.includes('Herdr fits if you work across several machines, from your phone, or on macOS or Windows; Mirador fits if everything runs on one Linux or WSL2 machine and memory is the limit.'), 'when each one fits');
-  assert.ok(table.includes('[herdrdev/herdr#6152](https://github.com/herdrdev/herdr/issues/6152) ("Add confirmation and a cap for large agent restores")') && table.includes('as not planned on 2026-11-23'), 'the Herdr issue and its date');
-  assert.ok(table.includes('Mirador has no relation to Herdr'), 'no relation to Herdr');
+  // S5, L6, L7: when each one fits, then herdrdev/herdr#6152 with its date, where Herdr sent the proposal and its
+  // resume_agents_on_restore switch, then no relation to Herdr, in each README.
+  assert.ok(table.includes('Herdr fits if you work across several machines, from your phone, or on macOS or Windows; Mirador fits if everything runs on one Linux or WSL2 machine and memory is the limit. Herdr closed [herdrdev/herdr#6152](https://github.com/herdrdev/herdr/issues/6152) ("Add confirmation and a cap for large agent restores") as not planned on 2026-11-23 and pointed the proposal to its Ideas discussions; in Herdr TUI, `[session] resume_agents_on_restore = false` turns off automatic agent resume and keeps the layout. Mirador has no relation to Herdr: the `herdr` names in its code are a gentle-shell compatibility layer ([`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code))'), 'the Herdr paragraph');
+  const tabla = section(read('README.es.md'), 'Cómo se compara Mirador');
+  assert.ok(tabla.includes('Mirador conviene si todo corre en una máquina Linux o WSL2 y el límite es la memoria. Herdr cerró [herdrdev/herdr#6152](https://github.com/herdrdev/herdr/issues/6152) ("Add confirmation and a cap for large agent restores", pedir confirmación y un tope al restaurar muchos agentes) como "not planned" el 23-11-2026 y derivó la propuesta a sus discusiones de Ideas; en Herdr TUI, `[session] resume_agents_on_restore = false` apaga la reanudación automática de agentes y conserva la disposición. Mirador no tiene relación con Herdr: los nombres `herdr` en su código son una capa de compatibilidad con gentle-shell ([`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code))'), 'el párrafo de Herdr');
 });
 
 // S1, S2, L4: the opening says the memory message, the three top bullets come in order, and one exact phrase says
@@ -166,13 +167,17 @@ const IDLE_SLEEP = {
 
 test('the opening and the top bullets put memory first, and one exact idle-sleep phrase appears in its three places (S1, S2)', () => {
   const en = read('README.md');
-  assert.ok(en.includes('\nMirador is a local web dashboard for running many coding agents on one Linux or WSL2 machine without filling its memory. It holds back agents opened in a row until there is free memory, leaves finished ones asleep after a restart, and shows where each project left off.\n'), 'the opening');
+  assert.ok(en.includes('\nMirador is a local web dashboard for running many coding agents on one Linux or WSL2 machine without filling its memory. When you open several agents at once, it starts them in batches and waits for free memory, leaves finished ones asleep after a restart, and shows where each project left off.\n'), 'the opening (L6)');
   const es = read('README.es.md');
-  assert.ok(es.includes('\nMirador es un dashboard web local para correr muchos agentes de programación en una máquina Linux o WSL2 sin llenar su memoria.'), 'la apertura');
+  assert.ok(es.includes('\nMirador es un dashboard web local para correr muchos agentes de programación en una máquina Linux o WSL2 sin llenar su memoria. Cuando abres varios agentes de una vez, los inicia por lotes y espera a que haya memoria libre, deja dormidos tras un reinicio a los que habían terminado y muestra dónde quedó cada proyecto.\n'), 'la apertura (L6)');
   assert.equal(JSON.parse(read('package.json')).description, 'Local web dashboard for running many coding agents on one Linux or WSL2 machine without filling its memory.', 'package.json says the same (S7)');
-  for (const [file, [memory, leftOff, machine], why, compare] of [
-    ['README.md', ['**Memory:**', '**Where it left off:**', '**Stays on the machine:**'], 'Why Mirador', 'How Mirador compares'],
-    ['README.es.md', ['**Memoria:**', '**Dónde quedó:**', '**Se queda en la máquina:**'], 'Por qué Mirador', 'Cómo se compara Mirador'],
+  for (const [file, [memory, leftOff, machine], why, compare, before, gate] of [
+    ['README.md', ['**Memory:**', '**Where it left off:**', '**Stays on the machine:**'], 'Why Mirador', 'How Mirador compares',
+      '- **Memory.** Before the launch gate, opening 11 agents at once filled 24 GB of RAM and the swap, and systemd-oomd killed agents and the Mirador window. ',
+      '. Now a [launch gate](docs/agents.md#opening-many-agents-without-filling-the-memory) holds agents opened in a row while MemAvailable is under the reserve. '],
+    ['README.es.md', ['**Memoria:**', '**Dónde quedó:**', '**Se queda en la máquina:**'], 'Por qué Mirador', 'Cómo se compara Mirador',
+      '- **Memoria.** Antes de la compuerta de arranque, abrir 11 agentes de una vez llenó 24 GB de RAM y la swap, y systemd-oomd mató agentes y la ventana de Mirador. ',
+      '. Ahora una [compuerta de arranque](docs/agents.md#opening-many-agents-without-filling-the-memory) retiene a los agentes abiertos seguidos mientras MemAvailable está bajo la reserva. '],
   ] as const) {
     const text = read(file);
     const phrase = IDLE_SLEEP[file];
@@ -184,6 +189,14 @@ test('the opening and the top bullets put memory first, and one exact idle-sleep
     assert.equal(points.length, 3, `${file}: three points in ${why}`);
     assert.ok(points[0].includes(phrase) || points[0].includes(capital), `${file}: the memory point`);
     assert.ok(points[0].includes('(docs/agents.md#opening-many-agents-without-filling-the-memory)') && points[0].includes('(docs/agents.md#one-systemd-scope-per-terminal)') && /11 \w+/.test(points[0]) && points[0].includes('24 GB') && points[0].includes('systemd-oomd'), `${file}: the gate, the scopes and the measured fact`);
+    // L6: the memory point starts with the measured fact, then the gate in its own sentence, then the idle-sleep phrase
+    // starting a sentence, in two or three sentences after the fact.
+    assert.ok(points[0].startsWith(before), `${file}: the memory point starts with the measured fact`);
+    assert.ok(points[0].includes(gate), `${file}: the gate in its own sentence`);
+    assert.ok(points[0].includes(`. ${capital}`), `${file}: the idle-sleep phrase starts a sentence`);
+    assert.ok(points[0].indexOf(before) < points[0].indexOf(gate) && points[0].indexOf(gate) < points[0].indexOf(capital) && points[0].indexOf(capital) < points[0].indexOf('(docs/agents.md#one-systemd-scope-per-terminal)'), `${file}: the fact, the gate, the sleep, then the scopes`);
+    const sentences = points[0].slice(before.length).split(/(?<=\.) (?=[A-ZÁÉÍÓÚ])/).length;
+    assert.ok(sentences >= 2 && sentences <= 3, `${file}: two or three sentences after the measured fact, got ${sentences}`);
     assert.ok(points[1].includes('(docs/attention.md#where-it-left-off)'), `${file}: where it left off`);
     assert.ok(points[2].includes('(docs/extending.md#night-shift)') && points[2].includes('(docs/agents.md#mcp-servers-per-project)'), `${file}: the night shift and MCP per project`);
     const memoryRow = wantRows(text)[4];
@@ -210,10 +223,12 @@ function tableRows(text: string, title: string): string[][] {
 
 // S6: "What Mirador does with each agent" is built from src/agents/catalog.ts: one row per entry, in catalog order.
 test('README.md and README.es.md list every catalog agent in order, with its binary, attention and resume flag (S6)', () => {
-  for (const [file, title, yes, no] of [
-    ['README.md', 'What Mirador does with each agent', 'Yes', 'No'],
-    ['README.es.md', 'Qué hace Mirador con cada agente', 'Sí', 'No'],
+  for (const [file, title, yes, no, column, pi, restartOnly] of [
+    ['README.md', 'What Mirador does with each agent', 'Yes', 'No', 'Sleeps', 'After 4 h idle, and after a restart', 'Only after a restart'],
+    ['README.es.md', 'Qué hace Mirador con cada agente', 'Sí', 'No', 'Se duerme', 'Tras 4 h inactivo, y tras un reinicio', 'Solo tras un reinicio'],
   ] as const) {
+    const header = section(read(file), title).split('\n').find((line) => line.startsWith('| '));
+    assert.equal(header?.split('|').slice(1, -1).map((cell) => cell.trim()).at(-1), column, `${file}: the last column is "${column}" (L6)`);
     const rows = tableRows(read(file), title);
     assert.deepEqual(rows.map(([label, binary]) => [label, binary]), AGENTS.map((agent) => [agent.label, `\`${agent.binary}\``]), `${file}: one row per catalog agent, in order`);
     rows.forEach(([label, , reports, resumes, sleeps], index) => {
@@ -221,8 +236,11 @@ test('README.md and README.es.md list every catalog agent in order, with its bin
       assert.equal(reports, agent.attention === 'hooks' ? yes : no, `${file}: ${label} reports its state`);
       assert.equal(resumes.startsWith('No'), agent.resume === null, `${file}: ${label} resumes exactly when the catalog has a resume argv`);
       if (agent.resume) assert.ok(resumes.startsWith(`\`${agent.resume[0]} <${agent.resumeKey}>\``), `${file}: ${label} names ${agent.resume[0]}`);
-      if (agent.attention === 'none') assert.equal(sleeps, no, `${file}: ${label} never reports finished, so it never sleeps`);
-      else assert.notEqual(sleeps, no, `${file}: ${label} sleeps at least after a restart`);
+      // L6: Pi sleeps after idleSleepHours and after a restart; the other agents with hooks and a resume argv only after a
+      // restart; the rest never report finished, so they never sleep.
+      if (agent.id === 'pi') assert.equal(sleeps, pi, `${file}: ${label} sleeps after 4 h idle and after a restart`);
+      else if (agent.attention === 'hooks' && agent.resume) assert.equal(sleeps, restartOnly, `${file}: ${label} sleeps only after a restart`);
+      else assert.equal(sleeps, no, `${file}: ${label} never reports finished, so it never sleeps`);
     });
   }
 });
