@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AGENTS } from '../src/agents/catalog.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const read = (path: string): string => readFileSync(join(ROOT, path), 'utf8');
@@ -99,41 +100,149 @@ test('the README compares Mirador with other tools without stars, prices or excl
   // The data table has the tools as columns, Mirador first, inside <details>.
   const details = table.slice(table.indexOf('<details>'), table.indexOf('</details>'));
   assert.ok(table.indexOf('<details>') >= 0 && table.indexOf('</details>') > table.indexOf('<details>'), 'the data table is inside <details>');
-  assert.match(details, /^\| \| \*\*Mirador\*\* \| \[Herdr\]/m, 'the tools are the columns, Mirador first');
-  assert.match(details, /^\| License \| Apache-2\.0 \|/m, 'Mirador says Apache-2.0');
+  // Herdr TUI (herdrdev/herdr) and Herdr app (herdr.dev, herdrdev/herdr-app) are two columns (S4).
+  assert.match(details, /^\| \| \*\*Mirador\*\* \| \[Herdr TUI\]\(https:\/\/github\.com\/herdrdev\/herdr\) \| \[Herdr app\]\(https:\/\/herdr\.dev\) \| \[Paradev\]/m, 'the tools are the columns, Mirador first, then Herdr TUI and Herdr app');
+  assert.match(details, /^\| License \| Apache-2\.0 \| Apache-2\.0 \| Apache-2\.0 \|/m, 'Mirador, Herdr TUI and Herdr app say Apache-2.0');
   assert.match(details, /^\| Agents in git worktrees \| No \|/m, 'Mirador says no worktrees');
-  for (const row of ['Form', 'Platforms', 'License', 'Agents in git worktrees', 'Remote machines and phone']) assert.match(details, new RegExp(`^\\| ${row} \\|`, 'm'), row);
+  for (const row of ['Form', 'Platforms', 'License', 'Agents in git worktrees', 'Remote machines and phone', 'Agent sessions after a restart', 'Idle agents put to sleep']) {
+    const line = details.split('\n').find((text) => text.startsWith(`| ${row} |`));
+    assert.ok(line, row);
+    assert.equal(line.split('|').length - 2, 8, `${row}: one cell per tool`);
+  }
+  // L3: Herdr TUI restores agent sessions by default, the Herdr app FAQ says it does not, cmux resumes with hooks.
+  const cells = (row: string) => details.split('\n').find((text) => text.startsWith(`| ${row} |`))?.split('|').slice(2, -1).map((cell) => cell.trim()) ?? [];
+  const restart = cells('Agent sessions after a restart');
+  assert.match(restart[1], /^On by default/, 'Herdr TUI: on by default');
+  assert.match(restart[2], /^No/, 'Herdr app: no');
+  const idle = cells('Idle agents put to sleep');
+  assert.match(idle[1], /^Plugins/, 'Herdr TUI: community plugins');
+  assert.match(idle[5], /^Opt-in/, 'cmux: terminal.agentHibernation, opt-in');
   assert.ok(details.includes('A dash means its official pages do not say, and "No" means they say so'), 'what a dash and "No" mean');
   // The "You want… | Look at" table comes first, with Mirador's rows on top.
   const want = table.split('\n').filter((line) => line.startsWith('| ') && table.indexOf(line) < table.indexOf('<details>'));
   assert.equal(want[0], '| You want… | Look at |');
-  const looks = want.slice(1).map((line) => line.split('|').at(-2)?.trim());
-  const firstOther = looks.findIndex((look) => look !== 'Mirador');
-  assert.ok(firstOther > 0 && looks.slice(firstOther).every((look) => look !== 'Mirador'), `Mirador's rows first: ${looks.join(', ')}`);
+  const looks = want.slice(1).map((line) => tools(line.split('|').at(-2) ?? ''));
+  const firstOther = looks.findIndex((look) => !look.includes('Mirador'));
+  assert.ok(firstOther > 0 && looks.slice(0, firstOther).every((look) => look[0] === 'Mirador') && looks.slice(firstOther).every((look) => !look.includes('Mirador')), `Mirador's rows first: ${looks.join(' / ')}`);
   // L21: SSH and a phone app are separate rows, each from the verified cells (Paradev states no SSH, Emdash no phone app).
   const look = (row: string) => table.split('\n').find((line) => line.startsWith(`| ${row} |`))?.split('|').at(-2) ?? '';
   const ssh = look('Remote machines over SSH');
   for (const tool of ['Herdr', 'cmux', 'Emdash', 'Claude Code Desktop']) assert.ok(ssh.includes(tool), `SSH: ${tool}`);
   assert.ok(!ssh.includes('Paradev'), 'SSH: no Paradev');
+  assert.deepEqual(tools(ssh).slice(0, 2), ['Herdr TUI', 'Herdr app'], 'SSH: Herdr TUI and Herdr app');
   const phone = look('A phone app');
-  for (const tool of ['Herdr', 'Paradev', 'Claude Code Desktop', 'cmux (iPhone beta)']) assert.ok(phone.includes(tool), `phone: ${tool}`);
-  assert.ok(!phone.includes('Emdash'), 'phone: no Emdash');
+  for (const tool of ['Herdr app', 'Paradev', 'Claude Code Desktop', 'cmux (iPhone beta)']) assert.ok(phone.includes(tool), `phone: ${tool}`);
+  assert.ok(!phone.includes('Emdash') && !phone.includes('Herdr TUI'), 'phone: no Emdash, no Herdr TUI');
   assert.ok(!look('A desktop app on Linux').includes('cmux') && !look('A desktop app on Windows').includes('cmux'), 'cmux is macOS only');
   assert.ok(!look('A desktop app on Windows').includes('Paradev'), 'Paradev: Windows is not yet available');
   // L22: Herdr's FAQ: "macOS (Apple silicon), Linux (x86_64 and arm64) and Windows (x86_64)."
-  assert.ok(look('A desktop app on macOS').includes('Herdr (Apple silicon)'), 'Herdr on macOS: Apple silicon');
-  for (const os of ['Linux', 'Windows']) assert.equal(tools(look(`A desktop app on ${os}`))[0], 'Herdr', `Herdr on ${os}`);
-  // L22: Mirador's rows say the need, in this order.
-  assert.deepEqual(wantRows(read('README.md')).filter((row) => row.look === 'Mirador').map((row) => row.want), [
-    'To see which agent is waiting for you, and where each project left off',
-    'Several agents on one machine without filling its memory: a launch gate, idle agents that sleep and, on Linux, one systemd scope per agent',
-    'Agents back in their folder and session after a reboot',
-    'A tool with no account and no telemetry, listening on 127.0.0.1 only',
-    'Any terminal agent or a plain shell, with native gentle-shell, pi and Engram integration',
-    'No desktop app to install: a browser window, also inside WSL2',
+  assert.ok(look('A desktop app on macOS').includes('Herdr app (Apple silicon)'), 'Herdr app on macOS: Apple silicon');
+  for (const os of ['Linux', 'Windows']) assert.equal(tools(look(`A desktop app on ${os}`))[0], 'Herdr app', `Herdr app on ${os}`);
+  // S4, L3, L5: Mirador's rows say the need, in this order, with the tools whose own docs state it.
+  assert.deepEqual(wantRows(read('README.md')).filter((row) => tools(row.look).includes('Mirador')).map((row) => [row.want, tools(row.look)]), [
+    ['To see which agent is waiting for you', ['Mirador', 'Herdr', 'Paradev', 'cmux', 'Emdash']],
+    ['Where each project left off', ['Mirador']],
+    ['Agents back in their session after a restart', ['Mirador', 'Herdr TUI', 'cmux']],
+    ['Agents opened in a row that wait for free memory, one systemd scope per agent, and, after a restart, only the agents that had not finished reopened', ['Mirador']],
+    ['Idle agents put to sleep to free memory', ['Mirador', 'cmux', 'Herdr TUI']],
+    ['A night shift and MCP servers per project for gentle-shell', ['Mirador']],
   ]);
-  assert.ok(read('README.md').includes('- **Resource control:** a launch gate for memory, idle agents that sleep and, on Linux, one systemd scope per agent.\n'), 'the second benefit (L22)');
-  assert.ok(table.includes('[Herdr](https://herdr.dev) (Apache-2.0) does those today and Mirador does not'), 'the Herdr recommendation sits in the comparison');
+  assert.ok(look('Agents back in their session after a restart').includes('Herdr TUI (on by default)'), 'Herdr TUI restores by default (L3)');
+  assert.ok(look('Idle agents put to sleep to free memory').includes('cmux (`terminal.agentHibernation`, opt-in)'), 'cmux hibernation is opt-in (L3)');
+  assert.ok(!/18 agents/.test(table), 'no "18 agents" figure (L3)');
+  // S5, L6, L7: when each one fits, then herdrdev/herdr#6152 with its date, where Herdr sent the proposal and its
+  // resume_agents_on_restore switch, then no relation to Herdr, in each README.
+  assert.ok(table.includes('Herdr fits if you work across several machines, from your phone, or on macOS or Windows; Mirador fits if everything runs on one Linux or WSL2 machine and memory is the limit. Herdr closed [herdrdev/herdr#6152](https://github.com/herdrdev/herdr/issues/6152) ("Add confirmation and a cap for large agent restores") as not planned on 2026-11-23 and pointed the proposal to its Ideas discussions; in Herdr TUI, `[session] resume_agents_on_restore = false` turns off automatic agent resume and keeps the layout. Mirador has no relation to Herdr: the `herdr` names in its code are a gentle-shell compatibility layer ([`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code))'), 'the Herdr paragraph');
+  const tabla = section(read('README.es.md'), 'Cómo se compara Mirador');
+  assert.ok(tabla.includes('Mirador conviene si todo corre en una máquina Linux o WSL2 y el límite es la memoria. Herdr cerró [herdrdev/herdr#6152](https://github.com/herdrdev/herdr/issues/6152) ("Add confirmation and a cap for large agent restores", pedir confirmación y un tope al restaurar muchos agentes) como "not planned" el 23-11-2026 y derivó la propuesta a sus discusiones de Ideas; en Herdr TUI, `[session] resume_agents_on_restore = false` apaga la reanudación automática de agentes y conserva la disposición. Mirador no tiene relación con Herdr: los nombres `herdr` en su código son una capa de compatibilidad con gentle-shell ([`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code))'), 'el párrafo de Herdr');
+});
+
+// S1, S2, L4: the opening says the memory message, the three top bullets come in order, and one exact phrase says
+// what sleeps (Pi agents while Mirador runs, every finished agent after a restart) in the top bullet, the memory point
+// of "Why Mirador" and the memory row of the comparison, in each README.
+const IDLE_SLEEP = {
+  'README.md': 'Pi agents finished for 4 h go to sleep ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), and after a restart every finished agent stays asleep',
+  'README.es.md': 'los agentes Pi que llevan 4 h con su turno terminado se duermen ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), y tras un reinicio todo agente que había terminado sigue dormido',
+} as const;
+
+test('the opening and the top bullets put memory first, and one exact idle-sleep phrase appears in its three places (S1, S2)', () => {
+  const en = read('README.md');
+  assert.ok(en.includes('\nMirador is a local web dashboard for running many coding agents on one Linux or WSL2 machine without filling its memory. When you open several agents at once, it starts them in batches and waits for free memory, leaves finished ones asleep after a restart, and shows where each project left off.\n'), 'the opening (L6)');
+  const es = read('README.es.md');
+  assert.ok(es.includes('\nMirador es un dashboard web local para correr muchos agentes de programación en una máquina Linux o WSL2 sin llenar su memoria. Cuando abres varios agentes de una vez, los inicia por lotes y espera a que haya memoria libre, deja dormidos tras un reinicio a los que habían terminado y muestra dónde quedó cada proyecto.\n'), 'la apertura (L6)');
+  assert.equal(JSON.parse(read('package.json')).description, 'Local web dashboard for running many coding agents on one Linux or WSL2 machine without filling its memory.', 'package.json says the same (S7)');
+  for (const [file, [memory, leftOff, machine], why, compare, before, gate] of [
+    ['README.md', ['**Memory:**', '**Where it left off:**', '**Stays on the machine:**'], 'Why Mirador', 'How Mirador compares',
+      '- **Memory.** Before the launch gate, opening 11 agents at once filled 24 GB of RAM and the swap, and systemd-oomd killed agents and the Mirador window. ',
+      '. Now a [launch gate](docs/agents.md#opening-many-agents-without-filling-the-memory) holds agents opened in a row while MemAvailable is under the reserve. '],
+    ['README.es.md', ['**Memoria:**', '**Dónde quedó:**', '**Se queda en la máquina:**'], 'Por qué Mirador', 'Cómo se compara Mirador',
+      '- **Memoria.** Antes de la compuerta de arranque, abrir 11 agentes de una vez llenó 24 GB de RAM y la swap, y systemd-oomd mató agentes y la ventana de Mirador. ',
+      '. Ahora una [compuerta de arranque](docs/agents.md#opening-many-agents-without-filling-the-memory) retiene a los agentes abiertos seguidos mientras MemAvailable está bajo la reserva. '],
+  ] as const) {
+    const text = read(file);
+    const phrase = IDLE_SLEEP[file];
+    const bullets = text.split('\n').filter((line, index, lines) => line.startsWith('- **') && index < lines.findIndex((l) => l.startsWith('[![test]')));
+    assert.deepEqual(bullets.map((line) => line.slice(2, line.indexOf(':**') + 3)), [memory, leftOff, machine], `${file}: the three top bullets`);
+    const capital = phrase[0].toUpperCase() + phrase.slice(1);
+    assert.ok(bullets[0].includes(phrase) || bullets[0].includes(capital), `${file}: the memory bullet`);
+    const points = section(text, why).split('\n').filter((line) => line.startsWith('- **'));
+    assert.equal(points.length, 3, `${file}: three points in ${why}`);
+    assert.ok(points[0].includes(phrase) || points[0].includes(capital), `${file}: the memory point`);
+    assert.ok(points[0].includes('(docs/agents.md#opening-many-agents-without-filling-the-memory)') && points[0].includes('(docs/agents.md#one-systemd-scope-per-terminal)') && /11 \w+/.test(points[0]) && points[0].includes('24 GB') && points[0].includes('systemd-oomd'), `${file}: the gate, the scopes and the measured fact`);
+    // L6: the memory point starts with the measured fact, then the gate in its own sentence, then the idle-sleep phrase
+    // starting a sentence, in two or three sentences after the fact.
+    assert.ok(points[0].startsWith(before), `${file}: the memory point starts with the measured fact`);
+    assert.ok(points[0].includes(gate), `${file}: the gate in its own sentence`);
+    assert.ok(points[0].includes(`. ${capital}`), `${file}: the idle-sleep phrase starts a sentence`);
+    assert.ok(points[0].indexOf(before) < points[0].indexOf(gate) && points[0].indexOf(gate) < points[0].indexOf(capital) && points[0].indexOf(capital) < points[0].indexOf('(docs/agents.md#one-systemd-scope-per-terminal)'), `${file}: the fact, the gate, the sleep, then the scopes`);
+    const sentences = points[0].slice(before.length).split(/(?<=\.) (?=[A-ZÁÉÍÓÚ])/).length;
+    assert.ok(sentences >= 2 && sentences <= 3, `${file}: two or three sentences after the measured fact, got ${sentences}`);
+    assert.ok(points[1].includes('(docs/attention.md#where-it-left-off)'), `${file}: where it left off`);
+    assert.ok(points[2].includes('(docs/extending.md#night-shift)') && points[2].includes('(docs/agents.md#mcp-servers-per-project)'), `${file}: the night shift and MCP per project`);
+    const memoryRow = wantRows(text)[4];
+    assert.ok(memoryRow.look.includes(`Mirador (${phrase})`), `${file}: the memory row`);
+    const count = (part: string) => text.split(part).length - 1;
+    assert.equal(phrase === capital ? count(phrase) : count(phrase) + count(capital), 3, `${file}: the phrase appears exactly in its three places`);
+    assert.ok(!section(text, compare).includes('18 agent'), `${file}: no 18 agents`);
+  }
+  for (const old of ['idle agents that sleep', 'agentes inactivos que se duermen']) {
+    for (const file of ['README.md', 'README.es.md']) assert.ok(!read(file).includes(old), `${file}: no "${old}"`);
+  }
+  assert.ok(read('README.md').includes('| [Night shift](docs/extending.md#night-shift) |'), 'the Night shift row links docs/extending.md#night-shift');
+  assert.ok(read('README.es.md').includes('| [Turno de noche](docs/extending.md#night-shift) |'), 'la fila Turno de noche enlaza docs/extending.md#night-shift');
+});
+
+/** The body rows of the first table under `## <title>`, as trimmed cells. */
+function tableRows(text: string, title: string): string[][] {
+  const lines = section(text, title).split('\n');
+  const header = lines.findIndex((line) => line.startsWith('| '));
+  if (header < 0) return [];
+  const end = lines.findIndex((line, index) => index > header && !line.startsWith('|'));
+  return lines.slice(header + 2, end < 0 ? undefined : end).map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()));
+}
+
+// S6: "What Mirador does with each agent" is built from src/agents/catalog.ts: one row per entry, in catalog order.
+test('README.md and README.es.md list every catalog agent in order, with its binary, attention and resume flag (S6)', () => {
+  for (const [file, title, yes, no, column, pi, restartOnly] of [
+    ['README.md', 'What Mirador does with each agent', 'Yes', 'No', 'Sleeps', 'After 4 h idle, and after a restart', 'Only after a restart'],
+    ['README.es.md', 'Qué hace Mirador con cada agente', 'Sí', 'No', 'Se duerme', 'Tras 4 h inactivo, y tras un reinicio', 'Solo tras un reinicio'],
+  ] as const) {
+    const header = section(read(file), title).split('\n').find((line) => line.startsWith('| '));
+    assert.equal(header?.split('|').slice(1, -1).map((cell) => cell.trim()).at(-1), column, `${file}: the last column is "${column}" (L6)`);
+    const rows = tableRows(read(file), title);
+    assert.deepEqual(rows.map(([label, binary]) => [label, binary]), AGENTS.map((agent) => [agent.label, `\`${agent.binary}\``]), `${file}: one row per catalog agent, in order`);
+    rows.forEach(([label, , reports, resumes, sleeps], index) => {
+      const agent = AGENTS[index];
+      assert.equal(reports, agent.attention === 'hooks' ? yes : no, `${file}: ${label} reports its state`);
+      assert.equal(resumes.startsWith('No'), agent.resume === null, `${file}: ${label} resumes exactly when the catalog has a resume argv`);
+      if (agent.resume) assert.ok(resumes.startsWith(`\`${agent.resume[0]} <${agent.resumeKey}>\``), `${file}: ${label} names ${agent.resume[0]}`);
+      // L6: Pi sleeps after idleSleepHours and after a restart; the other agents with hooks and a resume argv only after a
+      // restart; the rest never report finished, so they never sleep.
+      if (agent.id === 'pi') assert.equal(sleeps, pi, `${file}: ${label} sleeps after 4 h idle and after a restart`);
+      else if (agent.attention === 'hooks' && agent.resume) assert.equal(sleeps, restartOnly, `${file}: ${label} sleeps only after a restart`);
+      else assert.equal(sleeps, no, `${file}: ${label} never reports finished, so it never sleeps`);
+    });
+  }
 });
 
 /** The tool names of a "Look at" cell: top-level comma-separated, without parenthesised notes or backticks. */

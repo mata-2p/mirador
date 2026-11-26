@@ -4,7 +4,7 @@
   "private": true,
   "license": "Apache-2.0",
   "author": "Matías Barría (https://github.com/mata-2p)",
-  "description": "Local dashboard: folder tree, embedded gentle-shell terminals and daily Engram summaries.",
+  "description": "Local web dashboard for running many coding agents on one Linux or WSL2 machine without filling its memory.",
   "repository": {
     "type": "git",
     "url": "https://github.com/mata-2p/mirador.git"
