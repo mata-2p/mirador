@@ -5,7 +5,7 @@
 Mirador is a local web dashboard that keeps track of the coding agents running on your machine, folder by folder, so you can run several at once without losing the thread of any of them.
 
 - **Where it left off:** each project shows where its last session stopped.
-- **Resource control:** one systemd scope per agent, a launch gate for memory and idle agents that sleep (Linux).
+- **Resource control:** a launch gate for memory, idle agents that sleep and, on Linux, one systemd scope per agent.
 - **Stays on the machine:** no telemetry, no accounts, the server listens on 127.0.0.1 only.
 
 [![test](https://github.com/mata-2p/mirador/actions/workflows/test.yml/badge.svg)](https://github.com/mata-2p/mirador/actions/workflows/test.yml) [![GitHub Sponsors](https://img.shields.io/github/sponsors/mata-2p)](https://github.com/sponsors/mata-2p) [![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/matiasjbarriah) [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
@@ -90,17 +90,18 @@ Other tools run coding agents side by side too.
 
 | You want… | Look at |
 |---|---|
-| Where each local agent left off | Mirador |
-| One systemd scope per agent, a launch gate for memory and idle agents that sleep (Linux) | Mirador |
+| To see which agent is waiting for you, and where each project left off | Mirador |
+| Several agents on one machine without filling its memory: a launch gate, idle agents that sleep and, on Linux, one systemd scope per agent | Mirador |
 | Agents back in their folder and session after a reboot | Mirador |
-| A browser window with no GPU, Vulkan or desktop session, also inside WSL2 | Mirador |
-| Native gentle-shell, pi and Engram integration | Mirador |
+| A tool with no account and no telemetry, listening on 127.0.0.1 only | Mirador |
+| Any terminal agent or a plain shell, with native gentle-shell, pi and Engram integration | Mirador |
+| No desktop app to install: a browser window, also inside WSL2 | Mirador |
 | Remote machines over SSH | Herdr, cmux (`cmux ssh`), Emdash (SSH/SFTP), Claude Code Desktop |
 | A phone app | Herdr (iPhone, iPad, Android), Paradev (Apple, Android), Claude Code Desktop (Claude mobile app), cmux (iPhone beta) |
 | Agents in git worktrees | Paradev, Emdash, Claude Code Desktop (per session, off by default) |
 | A desktop app on macOS | Herdr (Apple silicon), Paradev, Claude Code Desktop, cmux (terminal app), Emdash |
-| A desktop app on Linux | Paradev, Claude Code Desktop (beta), Emdash |
-| A desktop app on Windows | Claude Code Desktop, Emdash |
+| A desktop app on Linux | Herdr, Paradev, Claude Code Desktop (beta), Emdash |
+| A desktop app on Windows | Herdr, Claude Code Desktop, Emdash |
 | A terminal UI in one Rust binary for macOS, Linux and Windows | Herdr TUI |
 
 If you need remote machines over SSH, a phone app or a single Rust binary (Herdr TUI, next to its native desktop app), [Herdr](https://herdr.dev) (Apache-2.0) does those today and Mirador does not. Mirador has no relation to Herdr: the `herdr` names in its code are a gentle-shell compatibility layer ([`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code)), and Mirador neither ships nor runs Herdr.

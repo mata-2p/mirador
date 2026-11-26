@@ -5,7 +5,7 @@
 Mirador es un dashboard web local que sigue a los agentes de programación que corren en tu máquina, carpeta por carpeta, para que puedas tener varios a la vez sin perderle el hilo a ninguno.
 
 - **Dónde quedó:** cada proyecto muestra dónde se detuvo su última sesión.
-- **Control de recursos:** un scope de systemd por agente, una compuerta de arranque según la memoria y agentes inactivos que se duermen (Linux).
+- **Control de recursos:** una compuerta de arranque según la memoria, agentes inactivos que se duermen y, en Linux, un scope de systemd por agente.
 - **Se queda en la máquina:** sin telemetría, sin cuentas, el servidor escucha solo en 127.0.0.1.
 
 [![test](https://github.com/mata-2p/mirador/actions/workflows/test.yml/badge.svg)](https://github.com/mata-2p/mirador/actions/workflows/test.yml) [![GitHub Sponsors](https://img.shields.io/github/sponsors/mata-2p)](https://github.com/sponsors/mata-2p) [![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/matiasjbarriah) [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
@@ -90,17 +90,18 @@ Otras herramientas también corren agentes de programación lado a lado.
 
 | Quieres… | Mira |
 |---|---|
-| Dónde quedó cada agente local | Mirador |
-| Un scope de systemd por agente, una compuerta de arranque según la memoria y agentes inactivos que se duermen (Linux) | Mirador |
+| Ver qué agente te está esperando y dónde quedó cada proyecto | Mirador |
+| Varios agentes en una máquina sin llenar su memoria: una compuerta de arranque, agentes inactivos que se duermen y, en Linux, un scope de systemd por agente | Mirador |
 | Agentes de vuelta en su carpeta y su sesión tras un reinicio | Mirador |
-| Una ventana del navegador sin GPU, Vulkan ni sesión de escritorio, también dentro de WSL2 | Mirador |
-| Integración nativa con gentle-shell, pi y Engram | Mirador |
+| Una herramienta sin cuenta y sin telemetría, que escucha solo en 127.0.0.1 | Mirador |
+| Cualquier agente de terminal o una shell simple, con integración nativa con gentle-shell, pi y Engram | Mirador |
+| Sin app de escritorio que instalar: una ventana del navegador, también dentro de WSL2 | Mirador |
 | Máquinas remotas por SSH | Herdr, cmux (`cmux ssh`), Emdash (SSH/SFTP), Claude Code Desktop |
 | Una app para el teléfono | Herdr (iPhone, iPad, Android), Paradev (Apple, Android), Claude Code Desktop (app móvil de Claude), cmux (iPhone beta) |
 | Agentes en worktrees de git | Paradev, Emdash, Claude Code Desktop (por sesión, apagados por defecto) |
 | Una app de escritorio en macOS | Herdr (Apple silicon), Paradev, Claude Code Desktop, cmux (app de terminal), Emdash |
-| Una app de escritorio en Linux | Paradev, Claude Code Desktop (beta), Emdash |
-| Una app de escritorio en Windows | Claude Code Desktop, Emdash |
+| Una app de escritorio en Linux | Herdr, Paradev, Claude Code Desktop (beta), Emdash |
+| Una app de escritorio en Windows | Herdr, Claude Code Desktop, Emdash |
 | Una interfaz de terminal en un solo binario de Rust para macOS, Linux y Windows | Herdr TUI |
 
 Si necesitas máquinas remotas por SSH, una app para el teléfono o un solo binario de Rust (Herdr TUI, junto a su app de escritorio nativa), [Herdr](https://herdr.dev) (Apache-2.0) hace eso hoy y Mirador no. Mirador no tiene relación con Herdr: los nombres `herdr` en su código son una capa de compatibilidad con gentle-shell ([`bin/herdr-shim`](CONTRIBUTING.md#gentle-names-in-the-code)), y Mirador no incluye ni corre Herdr.

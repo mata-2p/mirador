@@ -120,5 +120,61 @@ test('the README compares Mirador with other tools without stars, prices or excl
   assert.ok(!phone.includes('Emdash'), 'phone: no Emdash');
   assert.ok(!look('A desktop app on Linux').includes('cmux') && !look('A desktop app on Windows').includes('cmux'), 'cmux is macOS only');
   assert.ok(!look('A desktop app on Windows').includes('Paradev'), 'Paradev: Windows is not yet available');
+  // L22: Herdr's FAQ: "macOS (Apple silicon), Linux (x86_64 and arm64) and Windows (x86_64)."
+  assert.ok(look('A desktop app on macOS').includes('Herdr (Apple silicon)'), 'Herdr on macOS: Apple silicon');
+  for (const os of ['Linux', 'Windows']) assert.equal(tools(look(`A desktop app on ${os}`))[0], 'Herdr', `Herdr on ${os}`);
+  // L22: Mirador's rows say the need, in this order.
+  assert.deepEqual(wantRows(read('README.md')).filter((row) => row.look === 'Mirador').map((row) => row.want), [
+    'To see which agent is waiting for you, and where each project left off',
+    'Several agents on one machine without filling its memory: a launch gate, idle agents that sleep and, on Linux, one systemd scope per agent',
+    'Agents back in their folder and session after a reboot',
+    'A tool with no account and no telemetry, listening on 127.0.0.1 only',
+    'Any terminal agent or a plain shell, with native gentle-shell, pi and Engram integration',
+    'No desktop app to install: a browser window, also inside WSL2',
+  ]);
+  assert.ok(read('README.md').includes('- **Resource control:** a launch gate for memory, idle agents that sleep and, on Linux, one systemd scope per agent.\n'), 'the second benefit (L22)');
   assert.ok(table.includes('[Herdr](https://herdr.dev) (Apache-2.0) does those today and Mirador does not'), 'the Herdr recommendation sits in the comparison');
+});
+
+/** The tool names of a "Look at" cell: top-level comma-separated, without parenthesised notes or backticks. */
+function tools(cell: string): string[] {
+  const names: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const char of `${cell},`) {
+    if (char === '(') depth += 1;
+    else if (char === ')') depth = Math.max(0, depth - 1);
+    else if (depth > 0) continue;
+    else if (char === ',') {
+      const name = current.replaceAll('`', '').trim();
+      if (name) names.push(name);
+      current = '';
+    } else current += char;
+  }
+  return names;
+}
+
+/** The body rows of the first table of the comparison section (the "You want… / Look at" one, before <details>). */
+function wantRows(readme: string): { want: string; look: string }[] {
+  const lines = readme.split('\n');
+  const start = lines.findIndex((line) => line === '## How Mirador compares' || line === '## Cómo se compara Mirador');
+  const header = lines.findIndex((line, index) => index > start && line.startsWith('| '));
+  const details = lines.findIndex((line, index) => index > start && line.startsWith('<details>'));
+  assert.ok(start >= 0 && header > start && header < details, 'the comparison section opens with a table before <details>');
+  const end = lines.findIndex((line, index) => index > header && line.trim() === '');
+  return lines.slice(header + 2, end).map((line) => {
+    const cells = line.split('|');
+    return { want: cells[1].trim(), look: cells.at(-2)?.trim() ?? '' };
+  });
+}
+
+test('README.md and README.es.md name the same tools in the "You want… / Look at" table, row by row (L22)', () => {
+  assert.deepEqual(tools('Herdr (iPhone, iPad, Android), cmux (`cmux ssh`)'), ['Herdr', 'cmux']);
+  const en = wantRows(read('README.md'));
+  const es = wantRows(read('README.es.md'));
+  assert.ok(en.length > 0, 'no rows in the English table');
+  assert.equal(es.length, en.length, 'the same number of rows');
+  en.forEach((row, index) => {
+    assert.deepEqual([...tools(es[index].look)].sort(), [...tools(row.look)].sort(), `row ${index + 1}: "${row.want}" / "${es[index].want}"`);
+  });
 });
