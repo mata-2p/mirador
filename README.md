@@ -31,7 +31,7 @@ The tracking view, then the attention inbox and a folder's **Where it left off**
 
 <p><a href="docs/img/tracking.png"><img src="docs/img/tracking.png" alt="The tracking view in the demo workspace, with agents in lanes by what they need from you"></a></p>
 
-<p><a href="docs/img/inbox.png"><img src="docs/img/inbox.png" width="600" alt="The Waiting for you list of the attention inbox in the demo workspace"></a> <a href="docs/img/left-off.png"><img src="docs/img/left-off.png" width="240" alt="The Where it left off panel of a demo folder: its last worked day and the next steps of its latest session"></a></p>
+<p><a href="docs/img/inbox.png"><img src="docs/img/inbox.png" width="600" alt="The Waiting for you list of the attention inbox in the demo workspace"></a> <a href="docs/img/left-off.png"><img src="docs/img/left-off.png" width="210" alt="The Where it left off panel of a demo folder: its last worked day and the next steps of its latest session"></a></p>
 
 Mirador is an independent project, not an official part of gentle-shell; it builds on [gentle-shell](https://github.com/Gentleman-Programming/gentle-shell), pi and Engram, and thanks that community.
 

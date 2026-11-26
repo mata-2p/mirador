@@ -31,7 +31,7 @@ La vista de seguimiento, y después la bandeja de atención y el panel **Dónde 
 
 <p><a href="docs/img/tracking.png"><img src="docs/img/tracking.png" alt="La vista de seguimiento en el workspace de demostración, con los agentes en carriles según lo que necesitan de ti"></a></p>
 
-<p><a href="docs/img/inbox.png"><img src="docs/img/inbox.png" width="600" alt="La lista Te esperan de la bandeja de atención en el workspace de demostración"></a> <a href="docs/img/left-off.png"><img src="docs/img/left-off.png" width="240" alt="El panel Dónde quedó de una carpeta de demostración: su último día trabajado y los próximos pasos de su última sesión"></a></p>
+<p><a href="docs/img/inbox.png"><img src="docs/img/inbox.png" width="600" alt="La lista Te esperan de la bandeja de atención en el workspace de demostración"></a> <a href="docs/img/left-off.png"><img src="docs/img/left-off.png" width="210" alt="El panel Dónde quedó de una carpeta de demostración: su último día trabajado y los próximos pasos de su última sesión"></a></p>
 
 Mirador es un proyecto independiente, no una parte oficial de gentle-shell; se apoya en [gentle-shell](https://github.com/Gentleman-Programming/gentle-shell), pi y Engram, y agradece a esa comunidad.
 
