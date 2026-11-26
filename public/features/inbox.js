@@ -63,7 +63,10 @@ let notes = [];
 let announced = null;
 /** The phone view (phone-model.js nextView), null on the desktop layout. */
 let phoneView = null;
-/** The stream's state: 'live' while it reads, 'reconnecting' before the first answer and between tries. */
+/**
+ * The stream's state: 'live' while it reads, 'reconnecting' before the first answer and between tries,
+ * 'signed-out' once a 401 ended the session and no retry can succeed.
+ */
 let stream = 'reconnecting';
 /**
  * The timers of the stream's watch and of the notifications' window. unref: in Node (the tests run
@@ -381,7 +384,12 @@ async function follow() {
     const signal = watch.open();
     try {
       const response = await fetch('/api/inbox/stream', { headers: { authorization: `Bearer ${session.token}` }, signal });
-      if (response.status === 401) return session.expire();
+      // The session is over: no retry can succeed, so say so instead of leaving the header on
+      // Reconnecting… (#93). The sign-in overlay follows from expire().
+      if (response.status === 401) {
+        setStream('signed-out');
+        return session.expire();
+      }
       if (!response.ok || !response.body) throw new Error(`inbox stream answered ${response.status}`);
       delay = 1000;
       setStream('live');

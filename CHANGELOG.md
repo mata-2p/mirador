@@ -7,6 +7,10 @@ All notable changes to Mirador, written for the people who run it. The format fo
 
 ### Changed
 
+- On a phone, after **Sign out the other windows** the inbox header reads **Signed out** instead of
+  **Reconnecting…**: the session is over and no retry can succeed, so it no longer waits on a reconnect that
+  will not come.
+
 - On Linux x64 and arm64 with glibc 2.28 or newer, the one-line install (`curl … bootstrap.sh | sh`) installs the
   prebuilt release of 0.2.0 instead of building Mirador from source: it needs no git, Node, pnpm or compiler, and
   it checks the archive against the sha256 written in `scripts/bootstrap.sh` before unpacking it. When

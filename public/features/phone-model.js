@@ -77,7 +77,9 @@ export const shownClosed = (shownId, terminals) => shownId != null && !terminals
 export function inboxHeader(items, stream, t) {
   const count = Array.isArray(items) ? items.filter((item) => item.kind !== 'finished').length : 0;
   const live = stream === 'live';
-  return { title: t('inbox.phone.title', { count }), state: t(live ? 'inbox.phone.live' : 'inbox.phone.reconnecting'), live };
+  // A signed-out session never reconnects, so it must not read as a reconnect in progress (#93).
+  const stateKey = live ? 'inbox.phone.live' : stream === 'signed-out' ? 'inbox.phone.signedOut' : 'inbox.phone.reconnecting';
+  return { title: t('inbox.phone.title', { count }), state: t(stateKey), live };
 }
 
 /**

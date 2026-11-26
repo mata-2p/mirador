@@ -68,6 +68,20 @@ test('S3: the header shows the count and "live" while the stream reads, "reconne
   assert.equal(inboxHeader(items, undefined, en).live, false);
 });
 
+// Signing out the other windows ends this window's session for good: follow() returns on the 401 and
+// no retry can succeed, so the header must not keep saying Reconnecting… (#93).
+test('a signed-out session says so instead of Reconnecting…', () => {
+  const en = (key: string) => translate('en', key);
+  const es = (key: string) => translate('es', key);
+  const header = inboxHeader([], 'signed-out', en);
+  assert.equal(header.live, false);
+  assert.notEqual(header.state, 'Reconnecting…');
+  assert.match(header.state, /signed out/i);
+  assert.equal(inboxHeader([], 'signed-out', es).state, 'Sesión cerrada');
+  // Reconnecting still means reconnecting.
+  assert.equal(inboxHeader([], 'reconnecting', en).state, 'Reconnecting…');
+});
+
 test('S6: the key bar holds Enter, Esc, the four arrows and Tab, and no digit keys', () => {
   assert.deepEqual(KEY_BAR.map(({ key }) => key), ['Escape', 'Tab', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Enter']);
   assert.ok(KEY_BAR.every(({ caption }) => !/\d/.test(caption)), 'no digit captions');
