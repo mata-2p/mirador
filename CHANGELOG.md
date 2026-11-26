@@ -7,6 +7,9 @@ All notable changes to Mirador, written for the people who run it. The format fo
 
 ### Changed
 
+- **Olvidar / Forget** on a sleeping agent now leaves every open window, not only the one that pressed it:
+  the inbox stream carries the number of sleeping agents, and a window re-reads the list when it changes.
+
 - On Linux x64 and arm64 with glibc 2.28 or newer, the one-line install (`curl … bootstrap.sh | sh`) installs the
   prebuilt release of 0.2.0 instead of building Mirador from source: it needs no git, Node, pnpm or compiler, and
   it checks the archive against the sha256 written in `scripts/bootstrap.sh` before unpacking it. When

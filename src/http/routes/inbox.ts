@@ -8,6 +8,7 @@ import { herdrEnvProvider, herdrPaths, prepareHerdrDir } from '../../attention/h
 import { prepareOpencodePlugin } from '../../attention/opencode-plugin.ts';
 import { listenForReports } from '../../attention/socket.ts';
 import { AttentionStore, isTyping, type AttentionItem } from '../../attention/store.ts';
+import { openAgentsOf } from '../../terminals/open-agents.ts';
 import { LEFT_OFF_DAYS, runtimeDir, stateDir } from '../../config.ts';
 import { LEFT_OFF_MAX_LINE_BYTES, LeftOffStore, leftOffDir } from '../../memory/left-off.ts';
 import { provideNightAttention, whenNightService } from '../../night/service.ts';
@@ -23,6 +24,8 @@ const OPENCODE_PLUGIN = join(APP_DIR, 'bin', 'opencode-plugin.js');
 const AGY_HOOK = join(APP_DIR, 'bin', 'agy-hook');
 const MAX_STREAMS = 16;
 const HEARTBEAT_MS = 25_000;
+/** How often an open stream re-checks the number of sleeping agents, so a forget in another window lands in a second. */
+const SLEEPING_POLL_MS = 1_000;
 
 /**
  * W4 attention inbox: agent terminals that wait for the user (a permission, a
@@ -122,8 +125,24 @@ export const inboxRoutes: RouteModule = async (ctx) => {
         if (streams >= MAX_STREAMS) throw new HttpError(429, 'too many inbox streams', 'inbox_busy');
         streams++;
         res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store' });
-        const send = (items: AttentionItem[], nightNotes: AttentionItem[]) => res.write(JSON.stringify({ items, nightNotes }) + '\n');
+        // `sleeping`: how many agents sleep right now. Another window can forget one (DELETE
+        // /api/terminals/sleeping/:id) without touching the inbox, so a window watching only this
+        // stream needs a reason to re-read the list; the count is that reason and costs one number
+        // per message (#91).
+        const sleepingCount = () => openAgentsOf(ctx.terminals)?.sleeping().length ?? 0;
+        const send = (items: AttentionItem[], nightNotes: AttentionItem[]) =>
+          res.write(JSON.stringify({ items, nightNotes, sleeping: sleepingCount() }) + '\n');
         send(store.items(), store.nightNotes());
+        // Re-read on a short tick rather than on the heartbeat: a window that watches this stream
+        // only learns about a forget elsewhere within a second, not within 25. The message is one
+        // number, and only when it changed.
+        let lastSleeping = sleepingCount();
+        const sleepingTick = setInterval(() => {
+          const count = sleepingCount();
+          if (count === lastSleeping) return;
+          lastSleeping = count;
+          res.write(JSON.stringify({ sleeping: count }) + '\n');
+        }, SLEEPING_POLL_MS);
         const unsubscribe = store.subscribe(send);
         const heartbeat = setInterval(() => res.write('{}\n'), HEARTBEAT_MS);
         let open = true;
@@ -132,6 +151,7 @@ export const inboxRoutes: RouteModule = async (ctx) => {
           open = false;
           unsubscribe();
           clearInterval(heartbeat);
+          clearInterval(sleepingTick);
           unregister();
           streams--;
         };

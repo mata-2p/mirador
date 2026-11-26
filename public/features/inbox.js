@@ -65,6 +65,8 @@ let announced = null;
 let phoneView = null;
 /** The stream's state: 'live' while it reads, 'reconnecting' before the first answer and between tries. */
 let stream = 'reconnecting';
+/** The sleeping-agent count last read from the stream, so a forget in another window is noticed (#91). */
+let sleepingSeen = null;
 /**
  * The timers of the stream's watch and of the notifications' window. unref: in Node (the tests run
  * this file) a pending timer does not keep the process alive; a browser's timer id is a number, which has none.
@@ -402,6 +404,13 @@ async function follow() {
             message = JSON.parse(line);
           } catch {
             continue;
+          }
+          // Another window forgot a sleeping agent: this one re-reads the list instead of showing it
+          // until the next reload (#91). The first message only records the count, so a window that
+          // opens with the list already read does not re-read it once more.
+          if (typeof message?.sleeping === 'number') {
+            if (sleepingSeen !== null && message.sleeping !== sleepingSeen) emit('sleepingChanged');
+            sleepingSeen = message.sleeping;
           }
           if (Array.isArray(message?.items)) {
             items = message.items;

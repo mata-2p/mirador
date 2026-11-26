@@ -320,6 +320,25 @@ test('Olvidar drops a sleeping record for good; an unknown or awake id forgets n
   assert.equal(store.forgetSleeping('old-0'), false);
 });
 
+// The inbox stream reports this number so a window that watches only the stream learns about a
+// forget in another one (#91). Without the forget, the route would keep reporting the stale count.
+test('the number the stream reports follows the sleeping list after a forget', async () => {
+  const { file, owner, log } = await place();
+  await previousRun(file, owner, [
+    { rel: 'a', lastState: 'finished' },
+    { rel: 'b', lastState: 'finished' },
+  ]);
+  const { registry } = setup();
+  const store = await OpenAgents.load(file, { owner, log });
+  store.track(registry);
+  await store.restore({ registry, resolveFolder, sessionArgs, gate: roomy(), sleep: async () => undefined });
+  const before = store.sleeping().length;
+  assert.equal(before, 2);
+  assert.equal(store.forgetSleeping(store.sleeping()[0].id), true);
+  assert.equal(store.sleeping().length, before - 1);
+  await store.flush();
+});
+
 test('Despertar todos wakes every sleeping agent (or one workspace\'s) in batches through the gate', async () => {
   const { file, owner, log } = await place();
   await previousRun(file, owner, [

@@ -334,6 +334,9 @@ test('the stream still carries items and night notes on every line, and stays ca
   });
   const reader = again.body!.pipeThrough(new TextDecoderStream()).getReader();
   const first = JSON.parse((await reader.read()).value!.split('\n')[0]);
-  assert.deepEqual(Object.keys(first).sort(), ['items', 'nightNotes']);
+  // `sleeping` is the third field: the number of agents asleep, so a forget in another window
+  // reaches this one without the inbox changing (#91).
+  assert.deepEqual(Object.keys(first).sort(), ['items', 'nightNotes', 'sleeping']);
+  assert.equal(typeof first.sleeping, 'number');
   await reader.cancel();
 });

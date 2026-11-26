@@ -172,6 +172,8 @@ export async function init() {
   // The entries follow the language and workspace names through terminals.js's own re-render.
   on('terminals', refreshSleeping);
   on('slept', showSlept);
+  // Another window forgot a sleeping agent; the inbox stream says so (#91).
+  on('sleepingChanged', refreshSleeping);
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && refreshSleeping());
   await refreshSleeping();
 }
