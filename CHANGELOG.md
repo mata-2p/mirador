@@ -14,6 +14,14 @@ All notable changes to Mirador, written for the people who run it. The format fo
   clone as it is, stops and says how to keep updating it from source or move it away to switch to the prebuilt
   release. macOS, other systems and glibc older than 2.28 keep installing from source.
 
+### Fixed
+
+- Claude Code and Antigravity (`agy`) no longer stay **working** after a turn cut short with Esc or Ctrl-C while
+  the agent stays open (#3). Their working report now expires after 10 minutes with no hook, and every tool and
+  model-call hook sends it again (Claude Code's `PreToolUse` and agy's `PostToolUse`, for every tool, and
+  `PostInvocation` are now hooked too), so a cut turn reads `unknown`. Waiting and finished reports never
+  expire, and opencode is unchanged. Agents started after Mirador restarts get the new hooks.
+
 ## [0.2.0] - 2026-11-26
 
 0.2.0 adds the phone inbox, as an experimental feature, `mirador link` and signing out the other windows, clearer

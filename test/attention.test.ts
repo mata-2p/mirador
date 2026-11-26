@@ -366,6 +366,58 @@ test('a report that expires is pushed to subscribers when it expires, not at the
   assert.equal(heard.length, count, 'nothing else to push');
 });
 
+test('a hook working report with a TTL reads unknown once it expires, a refresh keeps it working, and finished never expires (#3)', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { store, advance } = setup();
+  const states: Array<[string, string]> = [];
+  const heard: AttentionItem[][] = [];
+  store.onAgentState((id, state) => states.push([id, state]));
+  store.subscribe((items) => heard.push(items));
+  store.track({ type: 'created', info: terminal('t1') });
+  const now = Date.parse('2026-10-28T10:05:00.000Z');
+  const working = (seq: number) => report('t1', { seq, ttlMs: 600_000, tokens: { session: 's1' }, clear: ['blocked', 'prompt', 'finished'] });
+  assert.equal(store.receive(working(now)), true);
+  assert.equal(store.agentState('t1'), 'working');
+
+  // A tool event 9 minutes in refreshes it: 10 minutes from then, not from the first report.
+  advance(540_000);
+  t.mock.timers.tick(540_000);
+  assert.equal(store.receive(working(now + 540_000)), true);
+  advance(540_000);
+  t.mock.timers.tick(540_000);
+  assert.equal(store.agentState('t1'), 'working', '18 minutes in, 9 after the refresh');
+  assert.deepEqual(states, [['t1', 'working']]);
+
+  // No hook for 10 minutes after the refresh (a turn cut by Esc): the state listener hears unknown at expiry.
+  advance(60_000);
+  t.mock.timers.tick(60_000);
+  assert.equal(store.agentState('t1'), 'unknown');
+  assert.deepEqual(states, [['t1', 'working'], ['t1', 'unknown']]);
+  assert.deepEqual(heard.at(-1) ?? [], [], 'no card for an expired working report');
+
+  // The next turn works again, and its finished report (no TTL) stays finished.
+  assert.equal(store.receive(working(now + 1_200_000)), true);
+  assert.equal(store.receive(report('t1', { seq: now + 1_200_001, ttlMs: null, tokens: { session: 's1', finished: String(now + 1_200_001) }, clear: ['blocked', 'prompt'] })), true);
+  advance(3_600_000);
+  t.mock.timers.tick(3_600_000);
+  assert.equal(store.agentState('t1'), 'finished');
+  assert.deepEqual(states.map(([, state]) => state), ['working', 'unknown', 'working', 'finished']);
+  assert.deepEqual(heard.at(-1)?.map((item) => [item.terminalId, item.kind]), [['t1', 'finished']]);
+});
+
+test('a hook waiting report has no TTL: it still waits after the working TTL', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { store, advance } = setup();
+  store.track({ type: 'created', info: terminal('t1') });
+  const now = Date.parse('2026-10-28T10:05:00.000Z');
+  store.receive(report('t1', { seq: now, ttlMs: 600_000, tokens: { session: 's1' }, clear: ['blocked', 'prompt', 'finished'] }));
+  store.receive(report('t1', { seq: now + 1, ttlMs: null, tokens: { session: 's1', prompt: 'Allow Bash?' }, clear: ['blocked', 'finished'] }));
+  advance(3_600_000);
+  t.mock.timers.tick(3_600_000);
+  assert.equal(store.agentState('t1'), 'waiting');
+  assert.deepEqual(view(store.items()), [['t1', 'prompt', 'Allow Bash?', null]]);
+});
+
 test('reports each just under the cap cannot ratchet the seq past the bridge, which recovers', () => {
   const { store, advance } = setup();
   let now = Date.parse('2026-10-28T10:05:00.000Z');

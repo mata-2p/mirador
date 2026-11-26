@@ -186,7 +186,7 @@ test('choosing claude-code launches claude --settings <file> with Mirador hooks,
   alpha = await open('alpha', 'claude-code');
   assert.deepEqual(await started(alpha.id), ['claude', '--settings', settingsPath()]);
   const settings = JSON.parse(await readFile(settingsPath(), 'utf8')) as { hooks: { [event: string]: Array<{ hooks: Array<{ type: string; command: string }> }> } };
-  for (const event of ['UserPromptSubmit', 'Notification', 'Stop']) {
+  for (const event of ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop']) {
     assert.equal(settings.hooks[event]?.[0]?.hooks[0]?.type, 'command', event);
     assert.match(settings.hooks[event][0].hooks[0].command, /bin\/claude-hook'?$/, event);
   }

@@ -5,10 +5,15 @@
 // (https://antigravity.google/docs/hooks). It reports the agent's attention state as the gentle-shell
 // bridge does, as one herdr report-metadata line to $HERDR_SOCKET_PATH for pane $HERDR_PANE_ID, from
 // source mirador:attention:
-//   PreInvocation                working     clears blocked, prompt and finished
-//   PreToolUse ask_question,     waiting     prompt=<the question, or the permission's reason>
+//   PreInvocation, PostInvocation,  working   clears blocked, prompt and finished; expires after WORKING_TTL_MS
+//   PostToolUse (any tool)
+//   PreToolUse ask_question,        waiting   prompt=<the question, or the permission's reason>
 //              ask_permission
-//   Stop                         finished    finished=<turn id>
+//   Stop                            finished  finished=<turn id>
+// Waiting and finished never expire. agy sends no hook at all when the user interrupts a turn (Esc), so each
+// model call and finished tool re-sends working with the TTL: a cut turn reads `unknown` once no hook came for
+// WORKING_TTL_MS. A PostToolUse after a question or a permission (it was answered) is working again. Mirador
+// hooks PreToolUse for the waiting tools only (src/attention/agy-hooks.ts); for any other tool it would be working.
 // Each report carries session=<conversationId>, which Mirador records to resume with `--conversation <id>`.
 // agy wants a JSON answer on stdout: `{"decision":"allow"}` for PreToolUse (go on to the next hook or agy's
 // own policy), `{"decision":"stop"}` for Stop (its `decision` is required; anything but "continue" lets agy
@@ -26,6 +31,10 @@ const PANE = /^[\w-]{1,64}$/;
 /** As SESSION_ID in src/agents/catalog.ts: a letter or digit first, so never an option. */
 const SESSION_ID = /^[A-Za-z0-9][\w-]{0,127}$/;
 const DEFAULT_PROMPT = 'Antigravity needs your input';
+/** How long a working report stands without another hook (10 minutes); as WORKING_TTL_MS in bin/claude-hook. */
+const WORKING_TTL_MS = 10 * 60 * 1000;
+/** The tools that wait for an answer (https://antigravity.google/docs/hooks#supported-tools). */
+const WAITING_TOOLS = new Set(['ask_question', 'ask_permission']);
 
 const oneLine = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, MAX_MESSAGE) : '');
 
@@ -36,7 +45,7 @@ function promptOf(tool) {
   return oneLine(args.Reason) || oneLine([args.Action, args.Target].filter((word) => typeof word === 'string').join(' '));
 }
 
-/** The tokens and cleared tokens `input` reports for `name`, or null when it reports nothing. */
+/** The expiry, tokens and cleared tokens `input` reports for `name`, or null when it reports nothing. */
 function reportOf(name, input, seq) {
   let event;
   try {
@@ -46,16 +55,19 @@ function reportOf(name, input, seq) {
   }
   if (typeof event !== 'object' || event === null || Array.isArray(event)) return null;
   const session = typeof event.conversationId === 'string' && SESSION_ID.test(event.conversationId) ? { session: event.conversationId } : {};
+  const working = { ttlMs: WORKING_TTL_MS, tokens: session, clear: ['blocked', 'prompt', 'finished'] };
   switch (name) {
     case 'PreInvocation':
-      return { tokens: session, clear: ['blocked', 'prompt', 'finished'] };
+    case 'PostInvocation':
+    case 'PostToolUse':
+      return working;
     case 'PreToolUse': {
       const tool = typeof event.toolCall === 'object' && event.toolCall !== null ? event.toolCall : {};
-      if (tool.name !== 'ask_question' && tool.name !== 'ask_permission') return null;
-      return { tokens: { ...session, prompt: promptOf(tool) || DEFAULT_PROMPT }, clear: ['blocked', 'finished'] };
+      if (!WAITING_TOOLS.has(tool.name)) return working;
+      return { ttlMs: null, tokens: { ...session, prompt: promptOf(tool) || DEFAULT_PROMPT }, clear: ['blocked', 'finished'] };
     }
     case 'Stop':
-      return { tokens: { ...session, finished: String(seq) }, clear: ['blocked', 'prompt'] };
+      return { ttlMs: null, tokens: { ...session, finished: String(seq) }, clear: ['blocked', 'prompt'] };
     default:
       return null;
   }
@@ -91,7 +103,7 @@ function main() {
     const seq = Date.now();
     const report = reportOf(name, input, seq);
     if (!report) return;
-    const line = JSON.stringify({ v: 1, cmd: 'report-metadata', pane, source: SOURCE, seq, ttlMs: null, ...report }) + '\n';
+    const line = JSON.stringify({ v: 1, cmd: 'report-metadata', pane, source: SOURCE, seq, ...report }) + '\n';
     if (Buffer.byteLength(line) <= MAX_LINE_BYTES) send(socket, line);
   });
 }
