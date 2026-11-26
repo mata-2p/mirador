@@ -20,6 +20,7 @@ import { confirmDialog, showAlert } from '/dialog.js';
 import { exitLabels, fitColumns, gridColumns, gridTracks, groupTerminals, mostRecentTerminal, reopensActiveGroup, reorderHintGroup, showsTabsBar, visibleCount } from '/terminal-groups.js';
 import { moveTerminal, moveTerminalBy, readOrder } from '/terminal-order-model.js';
 import { withSleepingGroups } from '/features/sleeping-model.js';
+import { scrollTerminalByTouch } from '/features/phone-model.js';
 import { terminalBody } from '/features/agent-picker-model.js';
 import { inputRetakeDue, returningSizes } from '/terminal-size.js';
 import { paneStatus } from '/pane-status-model.js';
@@ -386,8 +387,9 @@ function scrollByTouch(term, body) {
     touch = event.touches.length === 1 ? { y: event.touches[0].clientY, dragging: false, rest: 0 } : null;
   }, { passive: true });
   body.addEventListener('touchmove', (event) => {
-    // Only the phone's terminal view (features/phone.js), where phone.css also stops the page's pan.
-    if (document.body.dataset.phone !== 'terminal') return;
+    // Only where phone.css also stops the page's pan: the phone's terminal view, and its full
+    // interface, which puts a terminal under the finger too (#90).
+    if (!scrollTerminalByTouch(document.body.dataset.phone ?? null)) return;
     const wheel = WHEEL_TRACKING.has(term.modes.mouseTrackingMode);
     const scroll = !wheel && term.buffer.active.type !== 'alternate';
     if (!touch || event.touches.length !== 1 || !(wheel || scroll)) return;

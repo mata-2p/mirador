@@ -70,12 +70,12 @@ iOS does not keep an SSH app's forward running in the background for long. A way
 2. If the page shows **La sesión expiró / Session expired**, the session is over: Mirador restarted, another window pressed **Cerrar sesión en las demás ventanas / Sign out the other windows**, or 32 newer sessions pushed it out. No retry brings it back: run `mirador link` on the host and open the new link within 60 s. After a sign-out from another window, the header behind that notice still says **Reconnecting…** (#93).
 3. If the forward is running and a reload neither brings **Live** back nor shows **Session expired**, check on the host that Mirador is running: `mirador link` says `mirador: not running` when it is not.
 
-**Scrolling with a finger.** To scroll a terminal, open it from its card. Only that terminal view takes a finger drag:
+**Scrolling with a finger.** A finger dragged over a terminal scrolls that terminal, in the view a card opens and in the full interface alike:
 
 - In programs that do not track the mouse, such as Claude Code or a shell, the drag scrolls the history and the text follows the finger; typing or a key-bar key goes back to the end.
 - Programs that track the mouse, such as gentle-shell or `fzf --height`, get the drag as the mouse wheel.
 - Full-screen programs that do not track the mouse, such as `vim` or `less`, get nothing from the drag (#87).
-- In the full interface (**Abrir la interfaz completa / Open the full interface**), a finger moves the page, not the terminal's history (#90), and the terminal has no key bar (#81).
+- In the full interface (**Abrir la interfaz completa / Open the full interface**) the drag scrolls the terminal under the finger, and the page still pans everywhere outside a terminal; that terminal has no key bar yet (#81).
 - The drag has no momentum. The terminal uses a 12 px font, and pinch-zoom does not work over it (#89).
 
 **Known issues.**

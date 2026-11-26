@@ -7,6 +7,9 @@ All notable changes to Mirador, written for the people who run it. The format fo
 
 ### Changed
 
+- In the phone's full interface a finger dragged over a terminal now scrolls that terminal, as it
+  already did in the terminal opened from a card, instead of moving the page.
+
 - On Linux x64 and arm64 with glibc 2.28 or newer, the one-line install (`curl … bootstrap.sh | sh`) installs the
   prebuilt release of 0.2.0 instead of building Mirador from source: it needs no git, Node, pnpm or compiler, and
   it checks the archive against the sha256 written in `scripts/bootstrap.sh` before unpacking it. When

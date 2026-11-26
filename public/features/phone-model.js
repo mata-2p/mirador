@@ -16,6 +16,16 @@ export const PHONE_QUERY = `(max-width: ${PHONE_MAX_WIDTH}px)`;
 export const isNarrow = (width) => width <= PHONE_MAX_WIDTH;
 
 /**
+ * Whether a finger dragged over a terminal scrolls it (terminals.js `scrollByTouch`).
+ *
+ * It does in the phone's terminal view, and in the phone's full interface: both put a terminal
+ * under the finger with the page's pan out of the way, and #90 found that the full interface
+ * scrolled the page instead. Everywhere else — the phone deck, a wide touch screen, the desktop —
+ * a finger does what it did before, so the page keeps panning.
+ */
+export const scrollTerminalByTouch = (phoneView) => phoneView === 'terminal' || phoneView === 'deck';
+
+/**
  * The phone view after `action`, with `narrow` whether the viewport is under the width now; a wide
  * viewport always answers null. Actions: 'start' (the page opens), 'resize' (the width changed),
  * 'back' (a view's back control: the terminal goes back to the inbox, the inbox to the deck),

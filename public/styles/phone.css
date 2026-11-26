@@ -87,8 +87,10 @@
   body[data-phone="terminal"] #panes > .pane.active { display: flex; position: absolute; inset: 0; border: 0; border-radius: 0; box-shadow: none; }
   body[data-phone="terminal"] #panes > .pane.active > .pane-head { display: none; }
   body[data-phone="terminal"] #panes > .pane.active > .pane-body { margin: 0; padding: 4px 6px; border-radius: 0; }
-  /* A finger on the terminal scrolls its history (terminals.js scrollByTouch), never the page (#67). */
-  body[data-phone="terminal"] .pane-body, body[data-phone="terminal"] .pane-body * { touch-action: none; overscroll-behavior: contain; }
+  /* A finger on the terminal scrolls its history (terminals.js scrollByTouch), never the page (#67).
+     The full interface is the deck view, and it puts a terminal under the finger too (#90). */
+  body[data-phone="terminal"] .pane-body, body[data-phone="terminal"] .pane-body *,
+  body[data-phone="deck"] .pane-body, body[data-phone="deck"] .pane-body * { touch-action: none; overscroll-behavior: contain; }
   /* The key bar: 44px keys, spaced, on the terminal's dark well. */
   body[data-phone="terminal"] .phone-keys { display: flex; gap: 6px; padding: 6px; background: var(--well-head); overflow-x: auto; }
   .phone-key { flex: 1 0 auto; min-width: 44px; min-height: 44px; padding: 0 8px; border-radius: var(--radius-sm); background: var(--well); border-color: var(--well-line); color: var(--well-ink); font-family: var(--font-mono); font-size: var(--fs-read); }

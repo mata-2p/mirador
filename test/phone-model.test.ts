@@ -14,11 +14,12 @@ type PhoneModel = {
   isNarrow: (width: number) => boolean;
   nextView: (view: View, change: { action: string; narrow: boolean }) => View;
   showsActiveTerminal: (view: View) => boolean;
+  scrollTerminalByTouch: (view: View) => boolean;
   inboxHeader: (items: Array<{ terminalId: string; kind: string }>, stream: string | undefined, t: Translate) => { title: string; state: string; live: boolean };
   keyBytes: (key: string, mode: { applicationCursor: boolean }) => string | null;
   dragLines: (dy: number, cellHeight: number, rest?: number) => { lines: number; rest: number };
 };
-const { KEY_BAR, PHONE_MAX_WIDTH, PHONE_QUERY, dragLines, inboxHeader, isNarrow, keyBytes, nextView, showsActiveTerminal }: PhoneModel = await import(new URL('../public/features/phone-model.js', import.meta.url).href);
+const { KEY_BAR, PHONE_MAX_WIDTH, PHONE_QUERY, dragLines, inboxHeader, isNarrow, keyBytes, nextView, scrollTerminalByTouch, showsActiveTerminal }: PhoneModel = await import(new URL('../public/features/phone-model.js', import.meta.url).href);
 const { translate }: { translate: (language: string, key: string, vars?: Record<string, unknown>) => string } = await import(new URL('../public/i18n.js', import.meta.url).href);
 
 const ESC = '\x1b';
@@ -66,6 +67,15 @@ test('S3: the header shows the count and "live" while the stream reads, "reconne
   assert.deepEqual(inboxHeader([], 'reconnecting', en), { title: 'Waiting for you (0)', state: 'Reconnecting…', live: false });
   // Before the stream first answers it is not live either.
   assert.equal(inboxHeader(items, undefined, en).live, false);
+});
+
+// #90: the full interface is the deck view, and a finger dragged over a terminal there must scroll the
+// terminal, not the page. Everywhere a terminal is not the thing under the finger, the page keeps panning.
+test('a finger scrolls a terminal in the phone terminal view and in the full interface, nowhere else', () => {
+  assert.equal(scrollTerminalByTouch('terminal'), true);
+  assert.equal(scrollTerminalByTouch('deck'), true, 'the full interface is the deck view');
+  assert.equal(scrollTerminalByTouch('inbox'), false, 'the inbox has no terminal on screen');
+  assert.equal(scrollTerminalByTouch(null), false, 'a wide window keeps the page panning');
 });
 
 test('S6: the key bar holds Enter, Esc, the four arrows and Tab, and no digit keys', () => {
