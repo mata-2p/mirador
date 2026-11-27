@@ -8,7 +8,8 @@
 // cgroup.procs trees in a scratch dir.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OpenAgents } from '../src/terminals/open-agents.ts';
@@ -86,11 +87,12 @@ let counter = 0;
 let seq = 1_000_000;
 
 /** A Mirador wired as src/server.ts wires it, reading a simulated /proc and /sys. */
-async function mirador({ scopes = true } = {}) {
+async function mirador({ scopes = true, procDir = true } = {}) {
   const place = join(scratch, `case-${++counter}`);
   await mkdir(join(place, 'state'), { recursive: true });
   const roots: ResourceRoots = { proc: join(place, 'proc'), sys: join(place, 'sys') };
-  await mkdir(roots.proc, { recursive: true });
+  // procDir false: a platform without /proc (macOS).
+  if (procDir) await mkdir(roots.proc, { recursive: true });
   const agentDir = join(place, 'gentle-shell-agent');
   await mkdir(agentDir, { recursive: true });
   const owner = join(place, 'config.json');
@@ -504,4 +506,165 @@ test('the reason leaves when the agent starts working again', async () => {
   working(m, id);
   assert.equal(m.idle.awake(id), null);
   assert.equal((await terminalsApi(m)).list.find((t) => t.id === id)?.awake, undefined);
+});
+
+const UNCHECKED = /^mirador: idle sleep: could not check the open agent of workspace "dev" folder "[^"]+" for background work: /;
+
+test('a loop left running (an orphaned `while :; do curl …; sleep 30; done &`) keeps one reason while its child changes: one log line, a stable card name', async () => {
+  const m = await mirador();
+  const id = claudeIn(m, 'orphan-loop', 7000);
+  await proc(m, 7000, 'bash', 1);
+  await proc(m, 7001, 'claude', 7000);
+  // The loop's subshell, orphaned when its shell exited; each round runs a new child.
+  await proc(m, 7010, 'bash', 900, ['bash', '-c', 'while :; do curl …; sleep 30; done']);
+  await proc(m, 7011, 'curl', 7010, ['curl', SECRET]);
+  await scope(m, id, [7000, 7001, 7010, 7011]);
+  finished(m, id, 't-1');
+  await idleFor(m);
+  assert.deepEqual(m.idle.awake(id), { name: 'curl' });
+  let child = 7011;
+  for (const name of ['sleep', 'curl', 'sleep', 'curl']) {
+    await ended(m, child);
+    child++;
+    await proc(m, child, name, 7010);
+    await scope(m, id, [7000, 7001, 7010, child]);
+    m.timers.pass(MINUTE);
+    await m.idle.checked();
+    assert.deepEqual(m.idle.awake(id), { name: 'curl' }, `the card name stays while the loop runs (child ${name} ${child})`);
+  }
+  await idleFor(m, 2);
+  assert.deepEqual(m.idle.awake(id), { name: 'curl' });
+  assert.equal(isOpen(m, id), true);
+  const lines = m.logs.filter((line) => AWAKE.test(line));
+  assert.equal(lines.length, 1, 'one log line while the loop lasts, not one per child');
+  assert.match(lines[0], /\bcurl\b.*\b7011\b.*in its scope, outside its process tree/);
+});
+
+test('a polling job below a shell the agent started (kind b) keeps one reason while its child changes: one log line, a stable card name', async () => {
+  const m = await mirador();
+  const id = claudeIn(m, 'shell-loop', 7100);
+  await proc(m, 7100, 'bash', 1);
+  await proc(m, 7101, 'claude', 7100);
+  await proc(m, 7102, 'bash', 7101, ['/bin/bash', '-c', `while :; do curl ${SECRET}; sleep 30; done`]);
+  await stdio(m, 7102, '/dev/null', '/tmp/claude-1000/tasks/b2.output');
+  await proc(m, 7110, 'curl', 7102);
+  await scope(m, id, [7100, 7101, 7102, 7110]);
+  finished(m, id, 't-1');
+  await idleFor(m);
+  assert.deepEqual(m.idle.awake(id), { name: 'curl' });
+  let child = 7110;
+  for (const name of ['sleep', 'curl', 'sleep']) {
+    await ended(m, child);
+    child++;
+    await proc(m, child, name, 7102);
+    await scope(m, id, [7100, 7101, 7102, child]);
+    m.timers.pass(MINUTE);
+    await m.idle.checked();
+    assert.deepEqual(m.idle.awake(id), { name: 'curl' }, `the card name stays while the job runs (child ${name} ${child})`);
+  }
+  await idleFor(m);
+  const lines = m.logs.filter((line) => AWAKE.test(line));
+  assert.equal(lines.length, 1, 'one log line while the job lasts');
+  assert.match(lines[0], /\bcurl\b.*\b7110\b.*below a shell it started/);
+});
+
+test('a helper the agent starts after the process table was read (in cgroup.procs, missing from the snapshot) is its own: the agent sleeps', { timeout: 20_000 }, async () => {
+  const m = await mirador();
+  const id = claudeIn(m, 'late-helper', 7200);
+  await proc(m, 7200, 'bash', 1);
+  await proc(m, 7201, 'claude', 7200);
+  // cgroup.procs as a FIFO: the check blocks on it once its table is read, and the helper appears then.
+  const dir = scopeDir(m.roots, UID, `mirador-agent-${id}.scope`);
+  await mkdir(dir, { recursive: true });
+  assert.equal(spawnSync('mkfifo', [join(dir, 'cgroup.procs')]).status, 0, 'mkfifo');
+  finished(m, id, 't-1');
+  m.timers.pass(IDLE_MS);
+  const writer = await open(join(dir, 'cgroup.procs'), 'w');
+  await proc(m, 7202, 'node', 7201, ['node', '/opt/helper.js', SECRET]);
+  await writer.write('7200\n7201\n7202\n');
+  await writer.close();
+  await m.idle.checked();
+  assert.equal(m.idle.awake(id), null, 'not taken for an orphan');
+  assert.equal(m.registry.get(id), undefined, 'asleep');
+  assert.deepEqual(m.stopped, [[`mirador-agent-${id}`]]);
+  assert.equal(m.logs.filter((line) => AWAKE.test(line)).length, 0);
+});
+
+test('a check that cannot read the scope (cgroup.procs unreadable) keeps the agent open, one log line across several checks, no card line; once it reads, the agent sleeps', async () => {
+  const m = await mirador();
+  const id = claudeIn(m, 'read-error', 7300);
+  await proc(m, 7300, 'bash', 1);
+  await proc(m, 7301, 'claude', 7300);
+  // A directory where cgroup.procs should be: reading it fails (EISDIR).
+  const procs = join(scopeDir(m.roots, UID, `mirador-agent-${id}.scope`), 'cgroup.procs');
+  await mkdir(procs, { recursive: true });
+  finished(m, id, 't-1');
+  await idleFor(m, 3);
+  assert.equal(isOpen(m, id), true, 'work that cannot be verified is not stopped');
+  assert.deepEqual(m.stopped, []);
+  assert.deepEqual(m.openAgents.sleeping(), []);
+  assert.equal(m.timers.armed(IDLE_MS), 1, 'its clock keeps running');
+  assert.equal(m.idle.awake(id), null, 'no card line');
+  assert.equal((await terminalsApi(m)).list.find((t) => t.id === id)?.awake, undefined);
+  const lines = m.logs.filter((line) => UNCHECKED.test(line));
+  assert.equal(lines.length, 1, 'one log line per failure, not per check');
+  assert.match(lines[0], /cgroup\.procs|EISDIR/);
+  assert.equal(m.logs.filter((line) => AWAKE.test(line) || SLEEPS.test(line)).length, 0);
+  await rm(procs, { recursive: true, force: true });
+  await scope(m, id, [7300, 7301]);
+  await idleFor(m);
+  assert.equal(m.registry.get(id), undefined, 'asleep once the check works again');
+  assert.deepEqual(m.stopped, [[`mirador-agent-${id}`]]);
+  assert.equal(m.logs.filter((line) => UNCHECKED.test(line)).length, 1);
+});
+
+test('a process table cut at its limit (more than 5000 processes) keeps the agent open, one log line across several checks; once it fits, the agent sleeps', { timeout: 60_000 }, async () => {
+  const m = await mirador();
+  const id = claudeIn(m, 'truncated', 7400);
+  await proc(m, 7400, 'bash', 1);
+  await proc(m, 7401, 'claude', 7400);
+  await scope(m, id, [7400, 7401]);
+  const crowd = Array.from({ length: 5001 }, (_, i) => join(m.roots.proc, String(200_000 + i)));
+  for (let i = 0; i < crowd.length; i += 500) await Promise.all(crowd.slice(i, i + 500).map((dir) => mkdir(dir)));
+  finished(m, id, 't-1');
+  await idleFor(m, 3);
+  assert.equal(isOpen(m, id), true, 'its tree may be missing from the table: not stopped');
+  assert.deepEqual(m.stopped, []);
+  assert.equal(m.timers.armed(IDLE_MS), 1);
+  assert.equal(m.idle.awake(id), null, 'no card line');
+  const lines = m.logs.filter((line) => UNCHECKED.test(line));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /5000 processes/);
+  for (let i = 0; i < crowd.length; i += 500) await Promise.all(crowd.slice(i, i + 500).map((dir) => rm(dir, { recursive: true, force: true })));
+  await idleFor(m);
+  assert.equal(m.registry.get(id), undefined, 'asleep once the table fits');
+  assert.deepEqual(m.stopped, [[`mirador-agent-${id}`]]);
+});
+
+test('on a platform without /proc (macOS) the check is skipped: the agent sleeps as before, with no log about the check', async () => {
+  const m = await mirador({ scopes: false, procDir: false });
+  const id = claudeIn(m, 'no-proc', 7500);
+  finished(m, id, 't-1');
+  await idleFor(m);
+  assert.equal(m.registry.get(id), undefined, 'asleep');
+  assert.deepEqual(m.openAgents.sleeping().map((s) => s.id), [id]);
+  assert.equal(m.logs.filter((line) => UNCHECKED.test(line) || AWAKE.test(line)).length, 0);
+  assert.equal(m.logs.filter((line) => SLEEPS.test(line)).length, 1);
+});
+
+test('the server stopping while a background check is under way: its answer puts nothing to sleep', async () => {
+  const m = await mirador();
+  const id = claudeIn(m, 'stopping', 7600);
+  await proc(m, 7600, 'bash', 1);
+  await proc(m, 7601, 'claude', 7600);
+  await scope(m, id, [7600, 7601]);
+  finished(m, id, 't-1');
+  m.timers.pass(IDLE_MS);
+  m.idle.stop();
+  await m.idle.checked();
+  assert.equal(isOpen(m, id), true, 'not closed after stop()');
+  assert.deepEqual(m.stopped, []);
+  assert.deepEqual(m.openAgents.sleeping(), []);
+  assert.deepEqual(m.notes, []);
+  assert.equal(m.logs.filter((line) => SLEEPS.test(line)).length, 0);
 });

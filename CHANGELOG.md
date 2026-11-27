@@ -19,10 +19,12 @@ All notable changes to Mirador, written for the people who run it. The format fo
   shell wired to it as a stdio MCP server (stdin and stdout a pipe or a socket: `bash start.sh`, `sh -c '…'`), and
   for Pi any process whose command line is an MCP server Mirador reads for that folder, even through `sh -c`. Its card in **Seguimiento /
   Tracking** says why with the program's name only (**Despierto: npm sigue corriendo / Awake: npm is still
-  running**), and the log adds the PID, one line per reason; neither shows the command line, and browser
-  notifications and the phone's inbox never carry it. The card line goes away once the program ends, and the
-  agent sleeps at its clock's next tick. Without scopes an orphan cannot be seen, so the agent sleeps as before
-  (#1).
+  running**), and the log adds the PID, one line per reason (a loop that runs a new child every round keeps one
+  line and one name); neither shows the command line, and browser notifications and the phone's inbox never
+  carry it. The card line goes away once the program ends, and the agent sleeps at its clock's next tick. A
+  check that cannot be completed (a read error, more than 5000 processes) keeps the agent open, with one log
+  line. Without scopes an orphan cannot be seen, so the agent sleeps as before (#1); without `/proc` (macOS)
+  the check is skipped and the agent sleeps as before.
 
 ### Changed
 

@@ -1,4 +1,4 @@
-import { readFile, readlink } from 'node:fs/promises';
+import { readdir, readFile, readlink, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { terminalAgent } from '../attention/agent-args.ts';
 import { mcpServerCommands } from '../mcp/project-mcp.ts';
@@ -22,11 +22,21 @@ import type { TerminalRegistry } from './registry.ts';
  *   Code hands its servers socket pairs). A tool shell is not: Claude Code's background Bash has stdin
  *   `/dev/null` and its output in a file (checked live with Claude Code 2.1.332).
  * - **Background work (a):** a process in the scope's `cgroup.procs` that does not descend from the pty
- *   child: orphaned when the shell that started it exited (`npm run dev &`).
+ *   child: orphaned when the shell that started it exited (`npm run dev &`). One that started after the
+ *   process table was read is followed up through its status files: below the pty child it is classed
+ *   as the rest of the tree.
  * - **Background work (b):** a descendant of the agent through a shell, alive while its turn is finished
  *   (the only time this runs): a finished turn runs no tool, so it is a background job, unless the first
  *   such shell is wired to the agent as a stdio MCP server (above).
  * - Without scopes (`scope` null) only (b) can be seen: orphans leave the tree untracked (#1).
+ * - Without /proc (macOS) nothing can be read: the check is skipped (null), so the agent sleeps as idle
+ *   sleep did before this check.
+ * - A check that cannot be completed (a read error, or more than MAX_PROCESSES processes, so the tree may
+ *   be cut) answers `unchecked`: the agent stays open, since work that cannot be verified is not stopped.
+ *
+ * Each reason has a stable `top`, its identity while it lasts: the orphan whose parent is not an orphan of
+ * the scope (a), or the first shell below the agent (b). A loop or a polling job runs a new child every
+ * round; its top stays.
  *
  * What it answers is the program's name only, the comm the kernel keeps (`/proc/<pid>/status` Name), and
  * its pid: never an argument, since a command line can carry keys or connection strings.
@@ -47,7 +57,23 @@ export interface BackgroundWork {
   pid: number;
   /** 'orphan' (a: in the scope, outside the agent's tree) or 'shell' (b: below a shell the agent started). */
   kind: 'orphan' | 'shell';
+  /** The pid of the work's stable top: the topmost orphan (a) or the first shell below the agent (b). */
+  top: number;
 }
+
+/** The check could not be completed: what failed ('read', 'truncated'; IdleSleep adds 'error') and why, with no argument. */
+export interface BackgroundUnchecked {
+  unchecked: string;
+  reason: string;
+}
+
+/** Background work, a check that could not be completed, or null when nothing keeps the agent awake. */
+export type BackgroundResult = BackgroundWork | BackgroundUnchecked | null;
+
+export const isUnchecked = (result: BackgroundResult): result is BackgroundUnchecked => result !== null && 'unchecked' in result;
+
+const errorCode = (error: unknown) => (error as NodeJS.ErrnoException | null)?.code;
+const errorReason = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export interface BackgroundScan {
   roots?: ResourceRoots;
@@ -116,23 +142,63 @@ export function matchesMcp(argv: string[], mcp: string[][]): boolean {
   return mcp.some((server) => mine.has(normal(server)) || mine.has(normal(commandOf(server))));
 }
 
-/** What keeps the agent awake, or null. Never throws: anything it cannot read counts as nothing running. */
-export async function findBackgroundWork(scan: BackgroundScan): Promise<BackgroundWork | null> {
+/**
+ * What keeps the agent awake, null when nothing does or there is no /proc, or `unchecked` when the check
+ * could not be completed. Never throws.
+ */
+export async function findBackgroundWork(scan: BackgroundScan): Promise<BackgroundResult> {
   try {
     return await scanFor(scan);
-  } catch {
-    return null;
+  } catch (error) {
+    return { unchecked: 'read', reason: errorReason(error) };
   }
 }
 
-async function scanFor(scan: BackgroundScan): Promise<BackgroundWork | null> {
+async function scanFor(scan: BackgroundScan): Promise<BackgroundResult> {
   const roots = scan.roots ?? DEFAULT_ROOTS;
   const mcp = scan.mcp ?? [];
+  // No /proc (macOS): nothing to read, so nothing is checked. Any other failure to list it throws.
+  try {
+    await readdir(roots.proc);
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return null;
+    throw error;
+  }
   const table = new ProcessTable(roots.proc);
   await table.load(MAX_PROCESSES);
-  if (!table.byPid.has(scan.pid)) return null;
+  if (table.truncated) return { unchecked: 'truncated', reason: `more than ${MAX_PROCESSES} processes, so its process tree may be incomplete` };
+  if (!table.byPid.has(scan.pid)) {
+    // Gone: the terminal is ending. Still there: its status could not be read.
+    const gone = await stat(join(roots.proc, String(scan.pid))).then(
+      () => false,
+      (error) => (errorCode(error) === 'ENOENT' ? true : Promise.reject(error)),
+    );
+    return gone ? null : { unchecked: 'read', reason: `cannot read the status of its terminal's process (PID ${scan.pid})` };
+  }
   const tree = new Set(table.tree(scan.pid));
-  const nameOf = (pid: number) => programName(table.byPid.get(pid)?.name);
+  // Processes missing from the table (started after it was read): their name and parent, from their status file; null once gone.
+  const late = new Map<number, { name: string | null; ppid: number | undefined } | null>();
+  const statusOf = async (pid: number) => {
+    const known = table.byPid.get(pid);
+    if (known) return { name: known.name, ppid: known.ppid };
+    if (!late.has(pid)) {
+      const text = await readFile(join(roots.proc, String(pid), 'status'), 'utf8').catch(() => null);
+      const ppid = text?.match(/^PPid:\s+(\d+)/m)?.[1];
+      late.set(pid, text === null ? null : { name: text.match(/^Name:\t(.*)$/m)?.[1] ?? null, ppid: ppid === undefined ? undefined : Number(ppid) });
+    }
+    return late.get(pid)!;
+  };
+  const ppidOf = (pid: number) => table.byPid.get(pid)?.ppid ?? late.get(pid)?.ppid;
+  // Whether a process missing from the table runs below the pty child: followed up through status files.
+  const inTree = async (pid: number) => {
+    let at = (await statusOf(pid))?.ppid;
+    for (let depth = 0; at !== undefined && at > 0 && depth < MAX_DEPTH; depth++) {
+      if (tree.has(at)) return true;
+      at = (await statusOf(at))?.ppid;
+    }
+    return false;
+  };
+  const nameOf = (pid: number) => programName(table.byPid.get(pid)?.name ?? late.get(pid)?.name);
   const isShell = (pid: number) => SHELLS.has(nameOf(pid) ?? '');
   const argvs = new Map<number, Promise<string[]>>();
   const argv = (pid: number) => {
@@ -148,27 +214,40 @@ async function scanFor(scan: BackgroundScan): Promise<BackgroundWork | null> {
   const stdioServer = async (pid: number) => CONNECTED.test(await fd(pid, 0)) && CONNECTED.test(await fd(pid, 1));
   const found: BackgroundWork[] = [];
 
-  // (a) In the scope, outside the tree: orphans. The table may miss one that started after it was read.
+  // Started after the table was read, below the pty child: classed with the tree in (b).
+  const lateInTree: number[] = [];
+
+  // (a) In the scope, outside the tree: orphans. No scope unit (ENOENT): none to read; any other read error throws.
   if (scan.scope && scan.uid !== undefined) {
-    const procs = await readFile(join(scopeDir(roots, scan.uid, scan.scope), 'cgroup.procs'), 'utf8').catch(() => '');
+    const procs = await readFile(join(scopeDir(roots, scan.uid, scan.scope), 'cgroup.procs'), 'utf8').catch((error) =>
+      errorCode(error) === 'ENOENT' ? '' : Promise.reject(error),
+    );
+    const orphans: number[] = [];
     for (const line of procs.split('\n')) {
       const pid = Number(line.trim());
       if (!Number.isInteger(pid) || pid <= 0 || tree.has(pid)) continue;
-      const name = nameOf(pid) ?? programName((await readFile(join(roots.proc, String(pid), 'status'), 'utf8').catch(() => '')).match(/^Name:\t(.*)$/m)?.[1]);
+      await statusOf(pid);
       // Gone since cgroup.procs was read.
-      if (!name) continue;
+      if (!nameOf(pid)) continue;
+      if (!table.byPid.has(pid) && (await inTree(pid))) lateInTree.push(pid);
+      else orphans.push(pid);
+    }
+    const orphaned = new Set(orphans);
+    for (const pid of orphans) {
       if (await anyMcp([pid])) continue;
-      found.push({ name, pid, kind: 'orphan' });
+      let top = pid;
+      for (let depth = 0, up = ppidOf(top); up !== undefined && orphaned.has(up) && depth < MAX_DEPTH; depth++, up = ppidOf(top)) top = up;
+      found.push({ name: nameOf(pid)!, pid, kind: 'orphan', top });
     }
   }
 
   // (b) Below the agent through a shell.
-  for (const pid of tree) {
+  for (const pid of [...tree, ...lateInTree]) {
     if (pid === scan.pid) continue;
     const chain: number[] = [];
     for (let at: number | undefined = pid, depth = 0; at !== undefined && at !== scan.pid && depth < MAX_DEPTH; depth++) {
       chain.unshift(at);
-      at = table.byPid.get(at)?.ppid;
+      at = ppidOf(at);
     }
     // The launching shells, down to the agent: chain[agent].
     let agent = 0;
@@ -180,11 +259,15 @@ async function scanFor(scan: BackgroundScan): Promise<BackgroundWork | null> {
     if (await anyMcp(below)) continue;
     if (await stdioServer(shell)) continue;
     const name = nameOf(pid);
-    if (name) found.push({ name, pid, kind: 'shell' });
+    if (name) found.push({ name, pid, kind: 'shell', top: shell });
   }
 
-  // The program rather than the shell that runs it; then orphans; then the oldest pid.
-  found.sort((a, b) => Number(SHELLS.has(a.name)) - Number(SHELLS.has(b.name)) || Number(a.kind === 'shell') - Number(b.kind === 'shell') || a.pid - b.pid);
+  // One reason, the same at every check while it lasts: orphans, then the oldest top; within it the program
+  // rather than the shell that runs it, then the oldest pid.
+  found.sort(
+    (a, b) =>
+      Number(a.kind === 'shell') - Number(b.kind === 'shell') || a.top - b.top || Number(SHELLS.has(a.name)) - Number(SHELLS.has(b.name)) || a.pid - b.pid,
+  );
   return found[0] ?? null;
 }
 
@@ -203,7 +286,7 @@ export interface BackgroundCheckOptions {
  * for its folder (gentle-shell's `mcp.json` and the folder's `.pi/mcp.json`, mcpServerCommands); Mirador
  * reads no MCP config of the other agents, which start their servers directly anyway.
  */
-export function backgroundCheck(options: BackgroundCheckOptions): (id: string) => Promise<BackgroundWork | null> {
+export function backgroundCheck(options: BackgroundCheckOptions): (id: string) => Promise<BackgroundResult> {
   const uid = options.uid ?? process.getuid?.();
   return async (id) => {
     const info = options.registry.get(id);

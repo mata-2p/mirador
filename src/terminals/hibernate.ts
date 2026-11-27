@@ -1,6 +1,6 @@
 import { isTyping, type AgentAttentionState, type AttentionStore } from '../attention/store.ts';
 import { ownerNameFrom } from '../config.ts';
-import type { BackgroundWork } from './background-work.ts';
+import { isUnchecked, type BackgroundResult, type BackgroundUnchecked, type BackgroundWork } from './background-work.ts';
 import type { OpenAgents, Schedule } from './open-agents.ts';
 import type { TerminalRegistry } from './registry.ts';
 
@@ -24,8 +24,13 @@ import type { TerminalRegistry } from './registry.ts';
  *    below a shell it started; its own MCP servers and helpers do not count): it stays awake with the
  *    program's name as its reason (awake(), on its card through GET /api/terminals, never in the inbox,
  *    so never in a browser notification or on the phone) and one log line with that name and its PID
- *    per reason, not per check. While it shows, the reason is read again every BACKGROUND_WATCH_MS, so
- *    it leaves once the program ends; the clock then puts the agent to sleep at its next tick.
+ *    per reason, not per check: a reason is its work's stable top (BackgroundWork.top), so a loop that
+ *    runs a new child every round keeps its first line and card name. While it shows, the reason is read
+ *    again every BACKGROUND_WATCH_MS, so it leaves once the work ends; the clock then puts the agent to
+ *    sleep at its next tick. A check that cannot be completed (BackgroundUnchecked: a read error, a
+ *    process table cut at its limit, a check that throws) keeps it open the same way, with no card line
+ *    and one log line per kind of failure until a check works again. Without /proc (macOS) the check
+ *    finds nothing and the agent sleeps.
  * 3. A Pi agent (resume key 'file') gets sleepNote() through the night shift's note path
  *    (NightService.sendNote), framed as a note from Mirador and logged as Mirador's; without that path
  *    (no `sendNote`) it stays open. Once that save turn ends (working, then finished again) it is closed
@@ -81,7 +86,7 @@ export interface IdleSleepOptions {
    * The work agent `id` left running, read when its clock runs out (backgroundCheck in
    * src/terminals/background-work.ts); null when there is none. Absent: not checked, as before #115.
    */
-  background?: (id: string) => Promise<BackgroundWork | null>;
+  background?: (id: string) => Promise<BackgroundResult>;
 }
 
 interface Agent {
@@ -97,6 +102,8 @@ interface Agent {
   checking: boolean;
   /** Counts the background checks started; an answer that is not the latest one is dropped. */
   check: number;
+  /** The kinds of failed background checks already logged, until a check works again. */
+  unchecked: Set<string>;
 }
 
 const unrefSchedule: Schedule = (run, ms) => {
@@ -225,15 +232,35 @@ export class IdleSleep {
     if (!background) return this.sleepNow(id, agent);
     const token = ++agent.check;
     agent.checking = true;
-    this.track(background(id).catch(() => null).then((work) => {
+    this.track(this.read(background, id).then((work) => {
+      // A newer check, or closed or stopped meanwhile (forget() moves `check` on and drops the agent).
       if (agent.check !== token || this.agents.get(id) !== agent) return;
       agent.checking = false;
       // Typed into, closed, no longer finished or switched off meanwhile: its clock already says what follows.
       if (agent.cancelIdle || agent.saving || !this.stillDue(id)) return;
+      // Work that cannot be verified is not stopped: it stays open, as for the other holds.
+      if (isUnchecked(work)) {
+        this.cannotCheck(id, agent, work);
+        return this.arm(id, agent);
+      }
+      agent.unchecked.clear();
       if (work) return this.holdAwake(id, agent, work);
       agent.awake = null;
       this.sleepNow(id, agent);
     }));
+  }
+
+  /** The background check's answer; one that throws counts as a check that could not be completed. */
+  private read(background: (id: string) => Promise<BackgroundResult>, id: string): Promise<BackgroundResult> {
+    return background(id).catch((error) => ({ unchecked: 'error', reason: error instanceof Error ? error.message : String(error) }));
+  }
+
+  /** One log line per kind of failure while it lasts; no card line. */
+  private cannotCheck(id: string, agent: Agent, failure: BackgroundUnchecked): void {
+    if (agent.unchecked.has(failure.unchecked)) return;
+    agent.unchecked.add(failure.unchecked);
+    const info = this.options.registry.get(id);
+    this.log(`mirador: idle sleep: could not check the open agent of workspace ${JSON.stringify(info?.workspaceId)} folder ${JSON.stringify(info?.rel)} for background work: ${failure.reason}`);
   }
 
   private stillDue(id: string): boolean {
@@ -254,11 +281,13 @@ export class IdleSleep {
     this.watch(id, agent);
   }
 
-  /** One log line per reason: the program's name and its PID, only when it differs from the last one. */
+  /**
+   * One log line per reason: the program's name and its PID. The same reason (the same kind and top) keeps
+   * the line and the card name it first had, whichever child its top runs now.
+   */
   private showAwake(id: string, agent: Agent, work: BackgroundWork): void {
-    const same = agent.awake?.pid === work.pid && agent.awake?.name === work.name;
+    if (agent.awake?.kind === work.kind && agent.awake.top === work.top) return;
     agent.awake = work;
-    if (same) return;
     const info = this.options.registry.get(id);
     const where = work.kind === 'orphan' ? 'in its scope, outside its process tree' : 'below a shell it started';
     this.log(`mirador: the open agent of workspace ${JSON.stringify(info?.workspaceId)} folder ${JSON.stringify(info?.rel)} stays awake: ${work.name} (PID ${work.pid}) is still running ${where}; idle sleep checks again in ${this.span()}`);
@@ -278,8 +307,14 @@ export class IdleSleep {
       if (!agent.awake || !background) return;
       if (agent.checking) return this.watch(id, agent);
       const token = ++agent.check;
-      this.track(background(id).catch(() => null).then((work) => {
+      this.track(this.read(background, id).then((work) => {
         if (agent.check !== token || this.agents.get(id) !== agent || !agent.awake) return;
+        // Not verified: the reason stays as it was and is read again.
+        if (isUnchecked(work)) {
+          this.cannotCheck(id, agent, work);
+          return this.watch(id, agent);
+        }
+        agent.unchecked.clear();
         // The card line goes away; the clock decides when the agent sleeps.
         if (!work) return void (agent.awake = null);
         this.showAwake(id, agent, work);
@@ -346,7 +381,7 @@ export class IdleSleep {
   private agent(id: string): Agent {
     let agent = this.agents.get(id);
     if (!agent) {
-      agent = { cancelIdle: null, saving: null, awake: null, cancelWatch: null, checking: false, check: 0 };
+      agent = { cancelIdle: null, saving: null, awake: null, cancelWatch: null, checking: false, check: 0, unchecked: new Set() };
       this.agents.set(id, agent);
     }
     return agent;
