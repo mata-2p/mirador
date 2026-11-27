@@ -4,7 +4,7 @@
 
 Mirador es un dashboard web local para correr muchos agentes de programación en una máquina Linux o WSL2 sin llenar su memoria. Cuando abres varios agentes de una vez, los inicia por lotes y espera a que haya memoria libre, deja dormidos tras un reinicio a los que habían terminado y muestra dónde quedó cada proyecto.
 
-- **Memoria:** una compuerta de arranque para los agentes abiertos seguidos; los agentes Pi que llevan 4 h con su turno terminado se duermen ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), y tras un reinicio todo agente que había terminado sigue dormido; en Linux, un scope de systemd por agente.
+- **Memoria:** una compuerta de arranque para los agentes abiertos seguidos; los agentes que pueden retomar su sesión se duermen tras 4 h con su turno terminado (configurable en [Ajustes](docs/resources.md#idle-sleep), en minutos), y tras un reinicio todo agente que había terminado sigue dormido; en Linux, un scope de systemd por agente.
 - **Dónde quedó:** cada proyecto muestra dónde se detuvo su última sesión.
 - **Se queda en la máquina:** sin telemetría, sin cuentas, el servidor escucha solo en 127.0.0.1.
 
@@ -20,7 +20,7 @@ Mirador es un dashboard web local para correr muchos agentes de programación en
 
 En qué se enfoca Mirador:
 
-- **Memoria.** Antes de la compuerta de arranque, abrir 11 agentes de una vez llenó 24 GB de RAM y la swap, y systemd-oomd mató agentes y la ventana de Mirador. Ahora una [compuerta de arranque](docs/agents.md#opening-many-agents-without-filling-the-memory) retiene a los agentes abiertos seguidos mientras MemAvailable está bajo la reserva. Los agentes Pi que llevan 4 h con su turno terminado se duermen ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), y tras un reinicio todo agente que había terminado sigue dormido; en Linux cada agente tiene [un scope de systemd](docs/agents.md#one-systemd-scope-per-terminal), así que una muerte por falta de memoria se lleva un agente.
+- **Memoria.** Antes de la compuerta de arranque, abrir 11 agentes de una vez llenó 24 GB de RAM y la swap, y systemd-oomd mató agentes y la ventana de Mirador. Ahora una [compuerta de arranque](docs/agents.md#opening-many-agents-without-filling-the-memory) retiene a los agentes abiertos seguidos mientras MemAvailable está bajo la reserva. Los agentes que pueden retomar su sesión se duermen tras 4 h con su turno terminado (configurable en [Ajustes](docs/resources.md#idle-sleep), en minutos), y tras un reinicio todo agente que había terminado sigue dormido; en Linux cada agente tiene [un scope de systemd](docs/agents.md#one-systemd-scope-per-terminal), así que una muerte por falta de memoria se lleva un agente.
 - **Dónde quedó.** Cada proyecto muestra dónde se detuvo su última sesión, desde Engram o los últimos mensajes de Claude Code ([detalles](docs/attention.md#where-it-left-off)); una [vista de seguimiento](docs/attention.md#tracking-view) acompaña el día.
 - **Para quienes usan gentle-shell.** Un [turno de noche](docs/extending.md#night-shift) cuyo piloto automático responde las preguntas de los agentes mientras no estás, y [servidores MCP por proyecto](docs/agents.md#mcp-servers-per-project) para apagar los que una carpeta no necesita.
 
@@ -66,7 +66,7 @@ Un panel local para las carpetas de tus proyectos, con terminales de agentes ade
 | [Bandeja de atención](docs/attention.md#attention-inbox) | **Te esperan (N)** lista las terminales de agentes que necesitan tu respuesta o terminaron su turno. |
 | [Un scope de systemd por terminal](docs/agents.md#one-systemd-scope-per-terminal) | En Linux cada terminal corre en su propio scope de usuario de systemd, así que una muerte por falta de memoria se lleva una terminal, no todas. |
 | [Compuerta de arranque según la memoria](docs/agents.md#opening-many-agents-without-filling-the-memory) | Los agentes abiertos seguidos arrancan en tandas y esperan mientras la memoria libre está bajo la reserva. |
-| [Agentes dormidos](docs/agents.md#sleeping-agents-lazy-restore) | Después de un reinicio, todo agente que había terminado su turno duerme sin proceso hasta que lo despiertas; mientras Mirador corre, un agente Pi que lleva `idleSleepHours` (4 h por defecto) con su turno terminado guarda el resumen de su sesión y también se duerme, lo que necesita el puente de gentle-shell y una sesión de pi registrada ([idle sleep](docs/resources.md#idle-sleep)). |
+| [Agentes dormidos](docs/agents.md#sleeping-agents-lazy-restore) | Después de un reinicio, todo agente que había terminado su turno duerme sin proceso hasta que lo despiertas; mientras Mirador corre, un agente Pi, Claude Code, opencode o Antigravity que lleva 4 h con su turno terminado (se ajusta en Ajustes, en minutos) también se duerme, si ya registró una sesión para retomar; Pi guarda primero el resumen de su sesión ([idle sleep](docs/resources.md#idle-sleep), en inglés). |
 | [Reabrir tras un reinicio](docs/agents.md#reopening-agents-after-a-restart) | Los agentes abiertos vuelven en el siguiente arranque, en su carpeta y, con gentle-shell, pi, Claude Code, opencode o Antigravity, en su sesión. |
 | [Abrir varios agentes](docs/agents.md#opening-several-agents) | Marca carpetas en el modo de selección, o guárdalas como los proyectos del workspace, y abre un agente en cada una. |
 | [Servidores MCP por proyecto](docs/agents.md#mcp-servers-per-project) | Apaga los servidores MCP que una carpeta no necesita, lo que ahorra memoria en cada agente que se abre ahí. |
@@ -88,14 +88,14 @@ Los agentes que Mirador conoce, desde [`src/agents/catalog.ts`](src/agents/catal
 | Agente | Comando | Informa su estado | Retoma su sesión tras un reinicio | Se duerme |
 |---|---|---|---|---|
 | Pi (gentle-shell) | `gentle-shell` | Sí | `--session <file>` | Tras 4 h inactivo, y tras un reinicio |
-| Claude Code | `claude` | Sí | `--resume <id>` | Solo tras un reinicio |
-| opencode | `opencode` | Sí | `--session <id>` | Solo tras un reinicio |
-| Antigravity | `agy` | Sí | `--conversation <id>` | Solo tras un reinicio |
+| Claude Code | `claude` | Sí | `--resume <id>` | Tras 4 h inactivo, y tras un reinicio |
+| opencode | `opencode` | Sí | `--session <id>` | Tras 4 h inactivo, y tras un reinicio |
+| Antigravity | `agy` | Sí | `--conversation <id>` | Tras 4 h inactivo, y tras un reinicio |
 | Codex | `codex` | No | No, empieza de cero | No |
 | Gemini CLI | `gemini` | No | No, empieza de cero | No |
 | Kimi | `kimi` | No | No, empieza de cero | No |
 
-Solo se duerme un agente que informa que terminó su turno, así que los que no informan nada se reabren en cada arranque. Los agentes Pi también se duermen mientras Mirador corre ([idle sleep](docs/resources.md#idle-sleep), en inglés); los demás, solo tras un reinicio ([sleeping agents](docs/agents.md#sleeping-agents-lazy-restore)).
+Solo se duerme un agente que informa que terminó su turno, así que los que no informan nada se reabren en cada arranque y nunca se duermen. Los que sí lo informan se duermen mientras Mirador corre ([idle sleep](docs/resources.md#idle-sleep), en inglés) y tras un reinicio ([sleeping agents](docs/agents.md#sleeping-agents-lazy-restore)).
 
 ## Cómo se compara Mirador
 
@@ -107,7 +107,7 @@ Otras herramientas también corren agentes de programación lado a lado.
 | Dónde quedó cada proyecto | Mirador |
 | Agentes de vuelta en su sesión tras un reinicio | Mirador, Herdr TUI (activado por defecto), cmux (agentes cuyos hooks guardaron una sesión) |
 | Agentes abiertos seguidos que esperan memoria libre, un scope de systemd por agente, y que tras un reinicio solo se reabran los que no habían terminado | Mirador |
-| Agentes inactivos dormidos para liberar memoria | Mirador (los agentes Pi que llevan 4 h con su turno terminado se duermen ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), y tras un reinicio todo agente que había terminado sigue dormido), cmux (`terminal.agentHibernation`, opcional), Herdr TUI (plugins de la comunidad) |
+| Agentes inactivos dormidos para liberar memoria | Mirador (los agentes que pueden retomar su sesión se duermen tras 4 h con su turno terminado (configurable en [Ajustes](docs/resources.md#idle-sleep), en minutos), y tras un reinicio todo agente que había terminado sigue dormido), cmux (`terminal.agentHibernation`, opcional), Herdr TUI (plugins de la comunidad) |
 | Un turno de noche y servidores MCP por proyecto para gentle-shell | Mirador |
 | Máquinas remotas por SSH | Herdr TUI, Herdr app, cmux (`cmux ssh`), Emdash (SSH/SFTP), Claude Code Desktop |
 | Una app para el teléfono | Herdr app (iPhone, iPad, Android), Paradev (Apple, Android), Claude Code Desktop (app móvil de Claude), cmux (iPhone beta) |
@@ -132,9 +132,9 @@ La tabla muestra lo que decía el sitio o repositorio propio de cada una el 2026
 | Agentes en worktrees de git | No | — | — | Sí | Opcional⁵ | — | Sí |
 | Máquinas remotas y teléfono | [Túnel `ssh -L`](docs/security.md#opening-mirador-from-another-machine)¹ | SSH | SSH, apps móviles³ | Teléfono, nube⁴ | SSH, nube, teléfono⁵ | SSH, iPhone beta⁶ | SSH/SFTP |
 | Sesiones de agentes tras un reinicio | Retomadas¹ | Activado por defecto² | No³ | — | — | Con hooks⁶ | — |
-| Agentes inactivos dormidos | Agentes Pi¹ | Plugins² | — | — | — | Opcional⁶ | — |
+| Agentes inactivos dormidos | Agentes que retoman su sesión¹ | Plugins² | — | — | — | Opcional⁶ | — |
 
-¹ Mirador: un panel web local en una ventana del navegador; macOS es experimental; sin app, pero la bandeja se puede usar en el navegador del teléfono a través del mismo túnel ([experimental](docs/attention.md#the-phone-inbox-is-experimental)); tras un reinicio los agentes de gentle-shell, pi, Claude Code, opencode y Antigravity retoman su sesión y los demás empiezan de cero en su carpeta; los agentes Pi se duermen tras `idleSleepHours` (4 h por defecto) con su turno terminado, y tras un reinicio todo agente que había terminado sigue dormido.<br>
+¹ Mirador: un panel web local en una ventana del navegador; macOS es experimental; sin app, pero la bandeja se puede usar en el navegador del teléfono a través del mismo túnel ([experimental](docs/attention.md#the-phone-inbox-is-experimental)); tras un reinicio los agentes de gentle-shell, pi, Claude Code, opencode y Antigravity retoman su sesión y los demás empiezan de cero en su carpeta; los agentes Pi, Claude Code, opencode y Antigravity se duermen por defecto tras 4 h con su turno terminado (se ajusta en Ajustes, en minutos), y tras un reinicio todo agente que había terminado sigue dormido.<br>
 ² Herdr TUI: un solo binario de Rust en la terminal; Windows está en beta; "Native agent session restore is enabled by default" (la restauración nativa de sesiones de agentes está activada por defecto; `[session] resume_agents_on_restore`, [session state](https://herdr.dev/docs/session-state/)); los agentes inactivos se duermen solo con plugins de la comunidad como herdr-idle y herdr-hibernate ([plugins](https://herdr.dev/tui/plugins/)).<br>
 ³ Herdr app: una app de escritorio nativa ([herdrdev/herdr-app](https://github.com/herdrdev/herdr-app)); macOS en Apple silicon; apps para iPhone, iPad y Android; tras un reinicio sus paneles vuelven como una shell, porque el FAQ dice que "doesn't restart an agent or resume its work in progress" (no reinicia un agente ni retoma su trabajo en curso).<br>
 ⁴ Paradev: también una CLI, un SDK y un servidor MCP; "Windows is not yet available" (Windows aún no está disponible); la app para el teléfono es para dispositivos Apple y Android.<br>

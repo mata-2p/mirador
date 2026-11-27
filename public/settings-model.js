@@ -48,6 +48,46 @@ export const SIGN_OUT_OTHERS = {
   confirm: { title: 'settings.signOut.title', message: 'settings.signOut.message', confirmLabel: 'settings.signOut.confirm', cancelLabel: 'common.cancel' },
 };
 
+/**
+ * Idle sleep (#115), under the rows: a switch and the threshold in minutes, read and saved with GET and
+ * PUT /api/settings/idle-sleep and applied at once. Agents that can resume their session sleep after
+ * that many minutes finished with no typing (docs/resources.md#idle-sleep).
+ */
+export const IDLE_SLEEP_SETTING = {
+  key: 'settings.idleSleep',
+  hintKey: 'settings.idleSleepHint',
+  minutesKey: 'settings.idleSleep.minutes',
+  unitKey: 'settings.idleSleep.unit',
+  invalidKey: 'settings.idleSleep.invalid',
+  /** The threshold's range, in whole minutes (config `idleSleepMinutes`). */
+  min: 1,
+  max: 10080,
+};
+
+/**
+ * The idle-sleep switch for `setting` ({ on, minutes } from GET /api/settings/idle-sleep, null until read)
+ * while `busy` saves: checked while on, its visible word, whether it can be pressed (not before the setting
+ * is read, nor while it saves), and the minutes field's text.
+ */
+export function idleSleepSwitchView(setting, { busy = false } = {}) {
+  const checked = !!setting?.on;
+  return {
+    checked,
+    disabled: busy || !setting,
+    busy,
+    wordKey: busy ? 'night.switch.saving' : checked ? 'settings.switch.on' : 'settings.switch.off',
+    minutes: setting ? String(setting.minutes) : '',
+  };
+}
+
+/** The minutes field's `text` as a whole number of minutes in range, or null: nothing else is sent. */
+export function idleSleepMinutesFrom(text) {
+  const trimmed = String(text ?? '').trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const minutes = Number(trimmed);
+  return minutes >= IDLE_SLEEP_SETTING.min && minutes <= IDLE_SLEEP_SETTING.max ? minutes : null;
+}
+
 /** The line after a sign-out that cleared `cleared` other sessions: its i18n key and vars. */
 export function signOutResult(cleared) {
   if (!cleared) return { key: 'settings.signOut.none', vars: {} };

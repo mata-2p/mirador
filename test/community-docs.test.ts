@@ -158,11 +158,11 @@ test('the README compares Mirador with other tools without stars, prices or excl
 });
 
 // S1, S2, L4: the opening says the memory message, the three top bullets come in order, and one exact phrase says
-// what sleeps (Pi agents while Mirador runs, every finished agent after a restart) in the top bullet, the memory point
+// what sleeps (agents that can resume their session while Mirador runs, #115; every finished agent after a restart) in the top bullet, the memory point
 // of "Why Mirador" and the memory row of the comparison, in each README.
 const IDLE_SLEEP = {
-  'README.md': 'Pi agents finished for 4 h go to sleep ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), and after a restart every finished agent stays asleep',
-  'README.es.md': 'los agentes Pi que llevan 4 h con su turno terminado se duermen ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), y tras un reinicio todo agente que había terminado sigue dormido',
+  'README.md': 'agents that can resume their session go to sleep after 4 h finished (configurable in [Settings](docs/resources.md#idle-sleep), in minutes), and after a restart every finished agent stays asleep',
+  'README.es.md': 'los agentes que pueden retomar su sesión se duermen tras 4 h con su turno terminado (configurable en [Ajustes](docs/resources.md#idle-sleep), en minutos), y tras un reinicio todo agente que había terminado sigue dormido',
 } as const;
 
 test('the opening and the top bullets put memory first, and one exact idle-sleep phrase appears in its three places (S1, S2)', () => {
@@ -223,9 +223,9 @@ function tableRows(text: string, title: string): string[][] {
 
 // S6: "What Mirador does with each agent" is built from src/agents/catalog.ts: one row per entry, in catalog order.
 test('README.md and README.es.md list every catalog agent in order, with its binary, attention and resume flag (S6)', () => {
-  for (const [file, title, yes, no, column, pi, restartOnly] of [
-    ['README.md', 'What Mirador does with each agent', 'Yes', 'No', 'Sleeps', 'After 4 h idle, and after a restart', 'Only after a restart'],
-    ['README.es.md', 'Qué hace Mirador con cada agente', 'Sí', 'No', 'Se duerme', 'Tras 4 h inactivo, y tras un reinicio', 'Solo tras un reinicio'],
+  for (const [file, title, yes, no, column, idle] of [
+    ['README.md', 'What Mirador does with each agent', 'Yes', 'No', 'Sleeps', 'After 4 h idle, and after a restart'],
+    ['README.es.md', 'Qué hace Mirador con cada agente', 'Sí', 'No', 'Se duerme', 'Tras 4 h inactivo, y tras un reinicio'],
   ] as const) {
     const header = section(read(file), title).split('\n').find((line) => line.startsWith('| '));
     assert.equal(header?.split('|').slice(1, -1).map((cell) => cell.trim()).at(-1), column, `${file}: the last column is "${column}" (L6)`);
@@ -236,11 +236,9 @@ test('README.md and README.es.md list every catalog agent in order, with its bin
       assert.equal(reports, agent.attention === 'hooks' ? yes : no, `${file}: ${label} reports its state`);
       assert.equal(resumes.startsWith('No'), agent.resume === null, `${file}: ${label} resumes exactly when the catalog has a resume argv`);
       if (agent.resume) assert.ok(resumes.startsWith(`\`${agent.resume[0]} <${agent.resumeKey}>\``), `${file}: ${label} names ${agent.resume[0]}`);
-      // L6: Pi sleeps after idleSleepHours and after a restart; the other agents with hooks and a resume argv only after a
-      // restart; the rest never report finished, so they never sleep.
-      if (agent.id === 'pi') assert.equal(sleeps, pi, `${file}: ${label} sleeps after 4 h idle and after a restart`);
-      else if (agent.attention === 'hooks' && agent.resume) assert.equal(sleeps, restartOnly, `${file}: ${label} sleeps only after a restart`);
-      else assert.equal(sleeps, no, `${file}: ${label} never reports finished, so it never sleeps`);
+      // #115: every agent with a resume argv sleeps after 4 h idle and after a restart; the rest never sleep.
+      if (agent.resume) assert.equal(sleeps, idle, `${file}: ${label} sleeps after 4 h idle and after a restart`);
+      else assert.equal(sleeps, no, `${file}: ${label} has no resume argv, so it never sleeps`);
     });
   }
 });

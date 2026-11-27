@@ -148,6 +148,17 @@ test('the config file it reads is named, and its mode is the one resolved', asyn
   assert.match(stdout, /^Mode: plain \(config: plain\)$/m);
 });
 
+test('#115: a bad idleSleep or idleSleepMinutes is reported as a config problem, in the existing style', async () => {
+  const bin = await binDir('bin-idle', ['google-chrome-stable', 'gentle-shell']);
+  const env = await scratchEnv('idle', bin, closedPort);
+  await mkdir(join(env.XDG_CONFIG_HOME!, 'mirador'), { recursive: true });
+  await writeFile(join(env.XDG_CONFIG_HOME!, 'mirador', 'config.json'), JSON.stringify({ idleSleep: 'yes', idleSleepMinutes: 0 }));
+  const { code, stdout } = await runDoctor(env);
+  assert.equal(code, 0, stdout);
+  assert.match(stdout, /^ {2}problem: idleSleepMinutes must be a whole number of minutes from 1 to 10080; idleSleepHours or the default \(240\) applies$/m);
+  assert.match(stdout, /^ {2}problem: idleSleep must be true or false; the default \(on\) applies$/m);
+});
+
 test('a saved shell that is not bash is reported here too, because doctor is where a failed start is diagnosed (#10)', async () => {
   const bin = await binDir('bin-shell', ['google-chrome-stable', 'gentle-shell']);
   const env = await scratchEnv('shell', bin, closedPort);

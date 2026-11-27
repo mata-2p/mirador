@@ -7,6 +7,8 @@
 // - The "El árbol sigue a la terminal" switch turns the tree reveal on and off; its choice lives in
 //   core.js prefs (`mirador.treeFollows`, tree-reveal-model.js), which public/terminals.js reads.
 // - The "Ayuda" row's "Abrir la guía" opens the help guide (public/features/help.js).
+// - Under the rows, "Dormir inactivos / Idle sleep" (#115) has a switch and the threshold in minutes, read with
+//   GET /api/settings/idle-sleep and saved with PUT, which applies them at once (no restart).
 // - Under the rows, "Otras ventanas" signs out every other window (a lost phone) with
 //   DELETE /api/session/others, after a confirmation, and says how many it signed out.
 // - The night switch and the "Piloto automático" chip follow GET /api/night through
@@ -18,7 +20,7 @@ import { openGuide } from '/features/help.js';
 import { nightSwitchState, readNightStatus, toggleNight } from '/features/night.js';
 import { icon } from '/icons.js';
 import { showsExtra } from '/mode-model.js';
-import { SETTINGS_ROWS, SIGN_OUT_OTHERS, nightSwitchView, pressedChoices, sheetCloses, signOutResult, treeFollowsSwitchView } from '/settings-model.js';
+import { IDLE_SLEEP_SETTING, SETTINGS_ROWS, SIGN_OUT_OTHERS, idleSleepMinutesFrom, idleSleepSwitchView, nightSwitchView, pressedChoices, sheetCloses, signOutResult, treeFollowsSwitchView } from '/settings-model.js';
 import { readTreeFollows, writeTreeFollows } from '/features/tree-reveal-model.js';
 
 const NIGHT_POLL_MS = 30_000;
@@ -36,6 +38,15 @@ let signOutLine;
 let signOutAnswer = null;
 let signingOut = false;
 let timer = null;
+let idleSwitch;
+let idleWord;
+let idleMinutes;
+let idleLine;
+/** { on, minutes } from GET /api/settings/idle-sleep; null until read. */
+let idleSetting = null;
+let idleSaving = false;
+/** The last idle-sleep problem: { key } (the field's own check) or { error } (the server's); null when none. */
+let idleProblem = null;
 
 function choiceButton(row, choice) {
   return el(
@@ -122,12 +133,114 @@ export function mountSettings() {
         control(row),
       ),
     ),
+    ...idleSleepParts(),
     ...signOutParts(),
     nightError,
   );
   renderTheme();
   renderNight();
   renderTreeFollows();
+  renderIdleSleep();
+}
+
+/* ---------- Idle sleep ---------- */
+
+/** "Dormir inactivos": the switch row, the minutes row and the line that says what went wrong. */
+function idleSleepParts() {
+  const row = { id: 'idleSleep', ...IDLE_SLEEP_SETTING };
+  idleWord = el('span', { class: 'switch-state', 'aria-hidden': 'true' });
+  idleSwitch = el(
+    'button',
+    {
+      type: 'button',
+      class: 'switch',
+      role: 'switch',
+      'aria-checked': 'false',
+      'aria-labelledby': `settings-${row.id}-label`,
+      'aria-describedby': `settings-${row.id}-hint`,
+      disabled: true,
+      onclick: () => idleSetting && saveIdleSleep({ on: !idleSetting.on, minutes: idleSetting.minutes }),
+    },
+    idleWord,
+    el('span', { class: 'switch-track', 'aria-hidden': 'true' }, el('span', { class: 'switch-thumb' })),
+  );
+  idleMinutes = el('input', {
+    id: 'settings-idleSleep-minutes',
+    class: 'set-minutes',
+    type: 'text',
+    inputmode: 'numeric',
+    autocomplete: 'off',
+    size: '5',
+    disabled: true,
+    'aria-describedby': 'settings-idleSleep-error',
+    onchange: () => {
+      const minutes = idleSleepMinutesFrom(idleMinutes.value);
+      if (minutes === null) {
+        idleProblem = { key: IDLE_SLEEP_SETTING.invalidKey };
+        return renderIdleSleep({ keepField: true });
+      }
+      if (!idleSetting) return;
+      if (minutes !== idleSetting.minutes) return saveIdleSleep({ on: idleSetting.on, minutes });
+      // The saved value typed back after an invalid one: nothing to save, but the error goes.
+      if (idleProblem) {
+        idleProblem = null;
+        renderIdleSleep();
+      }
+    },
+  });
+  idleLine = el('p', { class: 'settings-error', role: 'alert', id: 'settings-idleSleep-error' });
+  return [
+    el('div', { class: 'set-row' }, el('span', { class: 'set-label' }, rowLabel(row)), idleSwitch),
+    el(
+      'div',
+      { class: 'set-row' },
+      el('label', { class: 'set-label', for: 'settings-idleSleep-minutes', 'data-i18n': row.minutesKey }, t(row.minutesKey)),
+      el('span', { class: 'set-field' }, idleMinutes, el('span', { 'data-i18n': row.unitKey, 'aria-hidden': 'true' }, t(row.unitKey))),
+    ),
+    idleLine,
+  ];
+}
+
+async function readIdleSleep() {
+  try {
+    idleSetting = await api('GET', '/api/settings/idle-sleep');
+    idleProblem = null;
+  } catch (error) {
+    idleProblem = { error: errorText(error) };
+  }
+  renderIdleSleep();
+}
+
+/** Saves `next` ({ on, minutes }); the server applies it at once. A refusal keeps the setting as it was. */
+async function saveIdleSleep(next) {
+  if (idleSaving) return;
+  idleSaving = true;
+  idleProblem = null;
+  renderIdleSleep();
+  try {
+    idleSetting = await api('PUT', '/api/settings/idle-sleep', next);
+  } catch (error) {
+    idleProblem = { error: errorText(error) };
+  } finally {
+    idleSaving = false;
+  }
+  renderIdleSleep();
+}
+
+/** Draws the switch, the field (unless `keepField`: the user's text stays to be fixed) and the problem line. */
+function renderIdleSleep({ keepField = false } = {}) {
+  const view = idleSleepSwitchView(idleSetting, { busy: idleSaving });
+  idleSwitch.setAttribute('aria-checked', String(view.checked));
+  // While it saves the switch keeps the focus, so it is only aria-disabled then.
+  idleSwitch.disabled = view.disabled && !view.busy;
+  idleSwitch.setAttribute('aria-disabled', String(view.disabled));
+  if (view.busy) idleSwitch.setAttribute('aria-busy', 'true');
+  else idleSwitch.removeAttribute('aria-busy');
+  idleWord.textContent = t(view.wordKey);
+  idleMinutes.disabled = !idleSetting || idleSaving;
+  if (!keepField) idleMinutes.value = view.minutes;
+  idleMinutes.setAttribute('aria-invalid', String(!!idleProblem?.key));
+  idleLine.textContent = idleProblem ? idleProblem.error ?? t(idleProblem.key) : '';
 }
 
 /* ---------- Sign out the other windows ---------- */
@@ -250,6 +363,9 @@ export async function init() {
   on('language', renderNight);
   on('language', renderTreeFollows);
   on('language', renderSignOut);
+  on('language', () => renderIdleSleep({ keepField: true }));
+  // Idle sleep applies in every mode.
+  readIdleSleep();
   // Plain mode has no night shift (public/mode-model.js): its row hides and GET /api/night is never read.
   if (!showsExtra(state.config, 'night')) {
     nightSwitch.closest('.set-row').hidden = true;

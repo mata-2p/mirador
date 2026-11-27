@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, saveSettings } from '../src/config.ts';
+import { idleSleepMs, loadConfig, saveSettings } from '../src/config.ts';
 
 let scratch: string;
 let home: string;
@@ -155,6 +155,58 @@ test('idleSleepHours (R5b idle sleep) defaults to 4, takes 0 (off) up to 168, an
     assert.equal(config.idleSleepHours, 4);
     assert.deepEqual(config.launchProblems, ['idleSleepHours must be a number of hours from 0 (off) to 168; the default (4) applies']);
   }
+});
+
+// #115: idle sleep in minutes with a switch; idleSleepHours is still read, and explicit minutes win.
+const MIN = 60_000;
+test('idle sleep defaults to on and 4 h (240 minutes), with or without a config file', async () => {
+  for (const config of [await loadConfig(await configFile('idle-defaults', { port: 5000 }), { HOME: home }), await loadConfig(join(scratch, 'idle-defaults-missing.json'), { HOME: home })]) {
+    assert.equal(config.idleSleep, true);
+    assert.equal(config.idleSleepMinutes, undefined);
+    assert.equal(idleSleepMs(config), 240 * MIN);
+    assert.deepEqual(config.launchProblems, []);
+  }
+});
+
+test('idleSleepMinutes wins over idleSleepHours; idleSleepHours alone is still read; idleSleep false turns idle sleep off', async () => {
+  const both = await loadConfig(await configFile('idle-both', { idleSleepHours: 2, idleSleepMinutes: 30 }), { HOME: home });
+  assert.deepEqual([both.idleSleepMinutes, both.idleSleepHours, idleSleepMs(both), both.launchProblems], [30, 2, 30 * MIN, []]);
+  const minutesWinOverOff = await loadConfig(await configFile('idle-minutes-hours-0', { idleSleepHours: 0, idleSleepMinutes: 45 }), { HOME: home });
+  assert.equal(idleSleepMs(minutesWinOverOff), 45 * MIN, 'explicit minutes win over idleSleepHours 0');
+  const hours = await loadConfig(await configFile('idle-hours', { idleSleepHours: 1.5 }), { HOME: home });
+  assert.equal(idleSleepMs(hours), 90 * MIN);
+  for (const minutes of [1, 10080]) {
+    const config = await loadConfig(await configFile(`idle-minutes-${minutes}`, { idleSleepMinutes: minutes }), { HOME: home });
+    assert.deepEqual([config.idleSleepMinutes, idleSleepMs(config), config.launchProblems], [minutes, minutes * MIN, []]);
+  }
+  const off = await loadConfig(await configFile('idle-off', { idleSleep: false, idleSleepMinutes: 30 }), { HOME: home });
+  assert.deepEqual([off.idleSleep, off.idleSleepMinutes, idleSleepMs(off), off.launchProblems], [false, 30, 0, []]);
+  const on = await loadConfig(await configFile('idle-on', { idleSleep: true }), { HOME: home });
+  assert.deepEqual([on.idleSleep, idleSleepMs(on)], [true, 240 * MIN]);
+});
+
+test('PRESERVE: idleSleepHours 0 still turns idle sleep off when no minutes are set', async () => {
+  const config = await loadConfig(await configFile('idle-hours-0', { idleSleepHours: 0 }), { HOME: home });
+  assert.deepEqual([config.idleSleep, config.idleSleepHours, idleSleepMs(config), config.launchProblems], [true, 0, 0, []]);
+});
+
+test('bad idleSleep and idleSleepMinutes values are reported, one line each, and the defaults apply', async () => {
+  for (const minutes of [0, 10081, 1.5, '30', -5, true]) {
+    const config = await loadConfig(await configFile(`idle-bad-minutes-${String(minutes)}`, { idleSleepMinutes: minutes, idleSleepHours: 2 }), { HOME: home });
+    assert.equal(config.idleSleepMinutes, undefined, String(minutes));
+    assert.equal(idleSleepMs(config), 2 * 60 * MIN, `${String(minutes)}: idleSleepHours applies`);
+    assert.deepEqual(config.launchProblems, ['idleSleepMinutes must be a whole number of minutes from 1 to 10080; idleSleepHours or the default (240) applies']);
+  }
+  const noHours = await loadConfig(await configFile('idle-bad-minutes-no-hours', { idleSleepMinutes: 0 }), { HOME: home });
+  assert.equal(idleSleepMs(noHours), 240 * MIN, 'the default without idleSleepHours');
+  for (const value of ['off', 0, 'false', {}]) {
+    const config = await loadConfig(await configFile(`idle-bad-switch-${JSON.stringify(value)}`, { idleSleep: value }), { HOME: home });
+    assert.equal(config.idleSleep, true, JSON.stringify(value));
+    assert.equal(idleSleepMs(config), 240 * MIN);
+    assert.deepEqual(config.launchProblems, ['idleSleep must be true or false; the default (on) applies']);
+  }
+  const nulls = await loadConfig(await configFile('idle-nulls', { idleSleep: null, idleSleepMinutes: null }), { HOME: home });
+  assert.deepEqual([nulls.idleSleep, nulls.idleSleepMinutes, nulls.launchProblems], [true, undefined, []], 'null is the same as absent');
 });
 
 test('a saved shell that is not bash is reported but kept, so plain terminals still use it (#10)', async () => {
