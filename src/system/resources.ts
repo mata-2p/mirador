@@ -125,10 +125,12 @@ export interface SamplerOptions extends PlatformOptions {
   maxOutside?: number;
 }
 
-interface ProcessEntry {
+export interface ProcessEntry {
   pid: number;
   ppid: number;
   uid: number;
+  /** The program's name as the kernel keeps it (`Name:`, the comm, at most 15 bytes): never its arguments. */
+  name: string | null;
   rss: number | null;
   swap: number | null;
 }
@@ -237,7 +239,8 @@ function parseStatus(pid: number, text: string): ProcessEntry | null {
   const uid = text.match(/^Uid:\s+(\d+)/m);
   if (!ppid || !uid) return null;
   const { VmRSS, VmSwap } = kilobytes(text, ['VmRSS', 'VmSwap']);
-  return { pid, ppid: Number(ppid[1]), uid: Number(uid[1]), rss: VmRSS, swap: VmSwap };
+  const name = text.match(/^Name:\t(.*)$/m)?.[1] ?? null;
+  return { pid, ppid: Number(ppid[1]), uid: Number(uid[1]), name, rss: VmRSS, swap: VmSwap };
 }
 
 /** utime + stime of /proc/<pid>/stat in microseconds; the name in parentheses may hold anything. */
@@ -254,8 +257,11 @@ function isLauncher(argv: string[]): boolean {
   return basename(argv[0] ?? '').startsWith('node') && basename(argv[1] ?? '') === 'gentle-shell.mjs';
 }
 
-/** One pass over /proc: every process with its parent, owner and memory. */
-class ProcessTable {
+/**
+ * One pass over /proc: every process with its parent, owner, name and memory. Also read by idle
+ * sleep's background-work check (src/terminals/background-work.ts).
+ */
+export class ProcessTable {
   readonly byPid = new Map<number, ProcessEntry>();
   readonly children = new Map<number, number[]>();
   truncated = false;

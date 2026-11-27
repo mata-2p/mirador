@@ -160,6 +160,8 @@ button.tracking-card:hover { border-color: var(--accent); }
 .tracking-since.warn { color: var(--warn); }
 .tracking-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tracking-reason { color: var(--warn); }
+/* Idle sleep keeps it awake: the program it left running ("Awake: npm is still running"). */
+.tracking-awake { font-size: var(--fs-sm); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tracking-detail,
 .tracking-activity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tracking-detail { font-family: var(--font-mono); font-size: var(--fs-sm); }

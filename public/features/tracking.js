@@ -238,6 +238,8 @@ function agentCard(agent, here) {
       : [duration(agent.minutes), `${t(`tracking.since.${agent.state}`, { time: duration(agent.minutes) })} · ${t('tracking.at', { time: clock(agent.since) })}`];
   return jumpCard(agent.id, `agent:${agent.id}`, here, [
     cardHead(agent.place, since[0], since[1], waits ? 'warn' : null),
+    // Next to its state: why idle sleep keeps it awake ("Awake: npm is still running"), the program's name only.
+    agent.awake ? el('span', { class: 'tracking-awake' }, t('tracking.awake', { name: agent.awake })) : null,
     el('span', { class: 'tracking-title', title: agent.title }, agent.title),
     usageLine(agent.id),
     reason ? el('span', { class: 'tracking-reason' }, reason) : null,
