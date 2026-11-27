@@ -1,6 +1,6 @@
 import { access, chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
-import { SESSION_ID, type AgentLaunch } from '../agents/catalog.ts';
+import { AGENTS, SESSION_ID, agentFor, type AgentEntry, type AgentLaunch } from '../agents/catalog.ts';
 import type { AgentAttentionState } from '../attention/store.ts';
 import { stateDir } from '../config.ts';
 import type { LaunchGate, LaunchRun } from '../system/memory-gate.ts';
@@ -40,7 +40,9 @@ import { scopeUnit, stopScopes } from './scopes.ts';
  *   agent's folder replaces that sleeping record too.
  * - Idle sleep (src/terminals/hibernate.ts): an open agent idle for hours is put to sleep
  *   while Mirador runs (sleep()): its live record becomes a sleeping record of the same shape, so a
- *   restart keeps it asleep and a wake resumes its session.
+ *   restart keeps it asleep and a wake resumes its session. Only an agent whose catalog entry has a
+ *   resume argv and whose record holds what that argv needs (a session file for pi, a session id for
+ *   claude-code, opencode and antigravity) can sleep (canSleep, resumeKey).
  * - Chosen agents: an agent opened with a catalog id keeps it in its
  *   record (`agent`) and reopens with that agent; only one with a verified resume continues its
  *   session, the others start fresh. A record without an id (older files, the configured agent opened
@@ -137,6 +139,8 @@ export interface OpenAgentsOptions {
   stateSaveMs?: number;
   /** Timer for the exit grace and the state write; tests replace it. The default never keeps the process alive. */
   schedule?: Schedule;
+  /** Config `agentCommand`: the agent a record without a catalog id runs (idle sleep: canSleep); unset = the config default, gentle-shell. */
+  agentCommand?: string;
 }
 
 const unrefSchedule: Schedule = (run, ms) => {
@@ -226,6 +230,7 @@ export class OpenAgents {
   private readonly schedule: Schedule;
   /** Removals of cleanly exited agents waiting for their grace delay, by terminal id. */
   private readonly leaving = new Map<string, () => void>();
+  private readonly agentCommand: string;
 
   private constructor(file: string, options: OpenAgentsOptions, log: (line: string) => void, active: boolean, pending: OpenAgentRecord[]) {
     this.file = file;
@@ -236,6 +241,7 @@ export class OpenAgents {
     this.exitGraceMs = options.exitGraceMs ?? EXIT_GRACE_MS;
     this.stateSaveMs = options.stateSaveMs ?? STATE_SAVE_MS;
     this.schedule = options.schedule ?? unrefSchedule;
+    this.agentCommand = options.agentCommand ?? 'gentle-shell';
   }
 
   /** Reads the records `owner` (the absolute config path) left; never throws for a bad file. */
@@ -353,9 +359,31 @@ export class OpenAgents {
     return true;
   }
 
-  /** Whether open agent `terminalId` can be put to sleep (sleep()): it has a session to resume, and the server runs. */
+  /**
+   * Whether open agent `terminalId` can be put to sleep (sleep()): the server runs, its catalog agent has a
+   * resume argv, and its record holds what that argv continues (resumeKey 'file': a session file its bridge
+   * reported; 'id': a session id its hooks reported). An agent with nothing recorded to resume never sleeps.
+   */
   canSleep(terminalId: string): boolean {
-    return !this.kept && !!this.live.get(terminalId)?.sessionFile;
+    const record = this.live.get(terminalId);
+    const key = this.resumeKey(terminalId);
+    if (this.kept || !record) return false;
+    if (key === 'id') return validSessionId(record.session) !== null;
+    // 'file', or an agent Mirador does not know (a custom agentCommand) whose bridge reported a session file:
+    // it sleeps through the note, as every agent with a session file did before #115.
+    return !!record.sessionFile;
+  }
+
+  /**
+   * What open agent `terminalId`'s resume argv continues: 'file', a session file (pi, which saves through
+   * Mirador's note before it sleeps), or 'id', a session id (claude-code, opencode, antigravity); null when
+   * its agent has no resume argv or Mirador does not know it.
+   */
+  resumeKey(terminalId: string): AgentEntry['resumeKey'] | null {
+    const record = this.live.get(terminalId);
+    if (!record) return null;
+    const entry = record.agent !== undefined ? AGENTS.find((agent) => agent.id === record.agent) : agentFor(this.agentCommand);
+    return entry?.resume ? entry.resumeKey : null;
   }
 
   /**

@@ -53,8 +53,12 @@ export interface MiradorConfig {
   notifications?: { desktop?: boolean; telegram?: boolean };
   /** How agents opened in a row start (src/system/memory-gate.ts); each key unset = its default. */
   launches?: Launches;
-  /** Idle sleep (src/terminals/hibernate.ts): hours an agent's turn stays finished before it saves and sleeps; 0 = off. */
+  /** Idle sleep (src/terminals/hibernate.ts): hours an agent's turn stays finished before it sleeps; 0 = off. `idleSleepMinutes` wins. */
   idleSleepHours?: number;
+  /** Idle sleep's switch (Settings): only false turns it off. */
+  idleSleep?: boolean;
+  /** Idle sleep's threshold in whole minutes (Settings), 1 to 10080; set, it wins over `idleSleepHours`. */
+  idleSleepMinutes?: number;
   /** The browser bin/mirador opens the app window with (a command on PATH or a macOS app name); unset = the Chromium-family list (src/doctor.ts BROWSERS, MAC_APPS). */
   browser?: string;
   /**
@@ -112,6 +116,33 @@ function savedIdleSleep(value: unknown): { hours: number; problems: string[] } {
   if (value === undefined || value === null) return { hours: IDLE_SLEEP_HOURS, problems: [] };
   if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= MAX_IDLE_SLEEP_HOURS) return { hours: value, problems: [] };
   return { hours: IDLE_SLEEP_HOURS, problems: [`idleSleepHours must be a number of hours from 0 (off) to ${MAX_IDLE_SLEEP_HOURS}; the default (${IDLE_SLEEP_HOURS}) applies`] };
+}
+
+/** Idle sleep's default threshold in minutes (4 h), and the longest allowed (one week). */
+export const IDLE_SLEEP_MINUTES = IDLE_SLEEP_HOURS * 60;
+const MAX_IDLE_SLEEP_MINUTES = 10_080;
+
+/** The saved `idleSleepMinutes` when it is a whole number of minutes in range; unset (absent or not valid) otherwise. */
+function savedIdleSleepMinutes(value: unknown): { minutes?: number; problems: string[] } {
+  if (value === undefined || value === null) return { problems: [] };
+  if (Number.isInteger(value) && (value as number) >= 1 && (value as number) <= MAX_IDLE_SLEEP_MINUTES) return { minutes: value as number, problems: [] };
+  return { problems: [`idleSleepMinutes must be a whole number of minutes from 1 to ${MAX_IDLE_SLEEP_MINUTES}; idleSleepHours or the default (${IDLE_SLEEP_MINUTES}) applies`] };
+}
+
+/** The saved `idleSleep` switch: true unless it is false; a value that is not a boolean is reported. */
+function savedIdleSleepSwitch(value: unknown): { on: boolean; problems: string[] } {
+  if (value === undefined || value === null || typeof value === 'boolean') return { on: value !== false, problems: [] };
+  return { on: true, problems: ['idleSleep must be true or false; the default (on) applies'] };
+}
+
+/**
+ * How long an agent stays finished before it sleeps, in ms; 0 = off. Off when the switch (`idleSleep`) is
+ * false; else `idleSleepMinutes` when set, else `idleSleepHours` (0 = off, as before), else 4 h.
+ */
+export function idleSleepMs(config: Pick<MiradorConfig, 'idleSleep' | 'idleSleepMinutes' | 'idleSleepHours'>): number {
+  if (config.idleSleep === false) return 0;
+  if (config.idleSleepMinutes !== undefined) return config.idleSleepMinutes * 60_000;
+  return (config.idleSleepHours ?? IDLE_SLEEP_HOURS) * 3_600_000;
 }
 
 /** Days a local left-off record is kept (config `leftOffDays`), and the most allowed. */
@@ -190,7 +221,7 @@ export interface LoadedConfig extends MiradorConfig {
    * listed (see WorkspaceStore). Empty when the file is fine.
    */
   workspaceProblems: string[];
-  /** Values of `launches`, `idleSleepHours`, `mode`, `browser`, `ownerName` and `leftOffDays` left out because they are not valid; logged at startup. */
+  /** Values of `launches`, `idleSleepHours`, `idleSleep`, `idleSleepMinutes`, `mode`, `browser`, `ownerName` and `leftOffDays` left out because they are not valid; logged at startup. */
   launchProblems: string[];
 }
 
@@ -280,14 +311,16 @@ export async function loadConfig(path = configPath(), env = process.env): Promis
     saved = JSON.parse(await readFile(path, 'utf8')) as SavedConfig;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    return { ...base, launches: {}, idleSleepHours: IDLE_SLEEP_HOURS, leftOff: true, leftOffDays: LEFT_OFF_DAYS, workspaceProblems: [], launchProblems: [] };
+    return { ...base, launches: {}, idleSleepHours: IDLE_SLEEP_HOURS, idleSleep: true, leftOff: true, leftOffDays: LEFT_OFF_DAYS, workspaceProblems: [], launchProblems: [] };
   }
   // Before workspaces, the config held one `root`: it becomes the Dev workspace.
-  const { root, workspaces, browser: browserValue, ownerName: ownerValue, ...rest } = saved;
+  const { root, workspaces, browser: browserValue, ownerName: ownerValue, idleSleep: switchValue, idleSleepMinutes: minutesValue, ...rest } = saved;
   const loaded = savedWorkspaces(workspaces);
   const migrated = loaded.workspaces ?? (typeof root === 'string' ? [devWorkspace(root)] : base.workspaces);
   const launches = savedLaunches(rest.launches);
   const idleSleep = savedIdleSleep(rest.idleSleepHours);
+  const idleSwitch = savedIdleSleepSwitch(switchValue);
+  const idleMinutes = savedIdleSleepMinutes(minutesValue);
   const mode = savedMode(rest.mode);
   const browser = savedBrowser(browserValue);
   const owner = savedOwnerName(ownerValue);
@@ -302,6 +335,8 @@ export async function loadConfig(path = configPath(), env = process.env): Promis
     mode: mode.mode,
     launches: launches.launches,
     idleSleepHours: idleSleep.hours,
+    idleSleep: idleSwitch.on,
+    ...(idleMinutes.minutes !== undefined ? { idleSleepMinutes: idleMinutes.minutes } : {}),
     // Only an explicit false turns the left-off capture off.
     leftOff: rest.leftOff !== false,
     leftOffDays: leftOffDays.days,
@@ -311,6 +346,8 @@ export async function loadConfig(path = configPath(), env = process.env): Promis
     launchProblems: [
       ...launches.problems,
       ...idleSleep.problems,
+      ...idleSwitch.problems,
+      ...idleMinutes.problems,
       ...mode.problems,
       ...browser.problems,
       ...owner.problems,

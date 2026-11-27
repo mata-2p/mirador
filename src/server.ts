@@ -4,13 +4,13 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { IDLE_SLEEP_HOURS, configPath, loadConfig, runtimeDir, saveSettings } from './config.ts';
+import { configPath, idleSleepMs, loadConfig, runtimeDir, saveSettings } from './config.ts';
 import { agentLaunch } from './agents/catalog.ts';
 import { resumeArgs } from './attention/agent-args.ts';
 import { AttentionStore } from './attention/store.ts';
 import { nightAttention, nightService, whenNightService } from './night/service.ts';
 import { OpenAgents, openAgentsPath, provideOpenAgents, stopPreviousScopes } from './terminals/open-agents.ts';
-import { IdleSleep } from './terminals/hibernate.ts';
+import { IdleSleep, provideIdleSleep } from './terminals/hibernate.ts';
 import { InvalidFolderError } from './folders/tree.ts';
 import { EngramClient, EngramUnavailableError } from './memory/engram.ts';
 import { configureCallMeter, configurePiConcurrency, configurePiHold } from './memory/translate.ts';
@@ -21,6 +21,7 @@ import { Router } from './http/router.ts';
 import { bootstrapRoute } from './http/routes/bootstrap.ts';
 import { signOutOthersRoute } from './http/routes/session.ts';
 import { configRoutes } from './http/routes/config.ts';
+import { idleSleepRoutes } from './http/routes/idle-sleep.ts';
 import { summaryRoutes } from './http/routes/summary.ts';
 import { clampSize, terminalRoutes } from './http/routes/terminals.ts';
 import { treeRoutes } from './http/routes/tree.ts';
@@ -121,6 +122,8 @@ const ROUTE_MODULES: RouteModule[] = [
 
   // MCP per project: which MCP servers a folder's agents start, saved as `enabled: false` in its .pi/mcp.json.
   mcpRoutes,
+  // Settings → idle sleep: the switch and the threshold in minutes, saved in config.json and applied at once.
+  idleSleepRoutes,
   gitStatusRoutes,
   gitDiffRoutes,
 
@@ -239,7 +242,8 @@ async function main(): Promise<void> {
     oomKilled: (unit) => scopeOomKilled(unit),
   });
   // The agents open when Mirador last stopped or died, reopened once the server is up.
-  const openAgents = await OpenAgents.load(openAgentsPath(), { owner: configPath() });
+  // `agentCommand`: the agent a record without a catalog id runs, so idle sleep knows how it resumes.
+  const openAgents = await OpenAgents.load(openAgentsPath(), { owner: configPath(), agentCommand: config.agentCommand });
   openAgents.track(terminals);
   // The sleeping agents' routes reach the records through the registry.
   provideOpenAgents(terminals, openAgents);
@@ -336,20 +340,27 @@ async function main(): Promise<void> {
   // The bridges report each agent's pi session file through the night socket.
   whenNightService(terminals, (night) => {
     ctx.onShutdown(night.onSessionFile((id, file) => void openAgents.recordSession(id, file)));
-    // Idle sleep: an agent finished for `idleSleepHours` saves its session through a Mirador note, then sleeps.
-    if (!(attention instanceof AttentionStore)) return;
+  });
+  // Idle sleep: an agent that can resume its session, finished for the threshold (Settings, config `idleSleep` and
+  // `idleSleepMinutes`, else `idleSleepHours`), sleeps. A Pi agent first saves through a Mirador note, which needs the
+  // night service; the others are closed at once. The Settings route changes the threshold while it runs.
+  if (attention instanceof AttentionStore) {
     const idle = new IdleSleep({
       registry: terminals,
       attention,
       openAgents,
-      sendNote: (id, text, noteId, frame, from) => night.sendNote(id, text, noteId, frame, from),
-      idleMs: (config.idleSleepHours ?? IDLE_SLEEP_HOURS) * 3_600_000,
+      sendNote: (id, text, noteId, frame, from) => {
+        const night = nightService(terminals);
+        return night ? night.sendNote(id, text, noteId, frame, from) : Promise.resolve({ sent: false, reason: 'the night service is not running' });
+      },
+      idleMs: idleSleepMs(config),
       // Config `ownerName`: who the save note says wakes the agent ("the user" unset).
       ownerName: () => ctx.config.ownerName,
     });
     idle.start();
+    provideIdleSleep(terminals, idle);
     ctx.onShutdown(() => idle.stop());
-  });
+  }
 
   const server = createServer(async (req, res) => {
     try {
