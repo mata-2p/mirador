@@ -56,8 +56,22 @@ async function start(name: string, env: Record<string, string> = {}): Promise<Ru
   let output = '';
   child.stdout?.on('data', (d) => (output += d));
   child.stderr?.on('data', (d) => (output += d));
-  await waitFor(async () => JSON.parse(await readFile(join(dir, 'run', 'mirador', 'state.json'), 'utf8')));
+  try {
+    await waitFor(async () => JSON.parse(await readFile(join(dir, 'run', 'mirador', 'state.json'), 'utf8')));
+  } catch {
+    // A server that never started is stopped here: left running, it would keep this test file alive for ever.
+    await stop(child);
+    throw new Error(`the ${name} server did not start (exit ${child.exitCode ?? child.signalCode}):\n${output}`);
+  }
   return { child, base: `http://127.0.0.1:${port}`, port, output: () => output };
+}
+
+/** Stops a server and waits for it to exit; one that already exited resolves at once. */
+async function stop(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  child.kill('SIGTERM');
+  await exited;
 }
 
 async function text(base: string, path: string): Promise<string> {
@@ -124,16 +138,16 @@ before(async () => {
   await cp(PUBLIC, copy, { recursive: true });
   // At boot: the copy starts with a module esbuild cannot parse.
   await writeFile(join(copy, 'drawer-model.js'), (await readFile(join(PUBLIC, 'drawer-model.js'), 'utf8')) + '\nexport const broken = ;\n');
-  [real, copied] = await Promise.all([start('real'), start('copied', { MIRADOR_PUBLIC_DIR: copy })]);
+  // Both start before either failure is thrown, so after() stops the one that did start.
+  const [first, second] = await Promise.allSettled([start('real'), start('copied', { MIRADOR_PUBLIC_DIR: copy })]);
+  if (first.status === 'fulfilled') real = first.value;
+  if (second.status === 'fulfilled') copied = second.value;
+  for (const result of [first, second]) if (result.status === 'rejected') throw result.reason;
 });
 
 after(async () => {
-  for (const running of [real, copied]) {
-    if (!running) continue;
-    running.child.kill('SIGTERM');
-    await new Promise((resolve) => running.child.once('exit', resolve));
-  }
-  await rm(scratch, { recursive: true, force: true });
+  for (const running of [real, copied]) if (running) await stop(running.child);
+  if (scratch) await rm(scratch, { recursive: true, force: true });
 });
 
 test('S1: / loads the two boot scripts first, then one JS bundle, one CSS bundle and the icon', async () => {
