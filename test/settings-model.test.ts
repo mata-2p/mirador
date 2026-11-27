@@ -13,6 +13,9 @@ import {
   SIGN_OUT_OTHERS,
   sheetCloses,
   signOutResult,
+  IDLE_SLEEP_SETTING,
+  idleSleepMinutesFrom,
+  idleSleepSwitchView,
 } from '../public/settings-model.js';
 import { LANGUAGES, MESSAGES, translate } from '../public/i18n.js';
 import { THEMES } from '../public/theme-model.js';
@@ -140,4 +143,34 @@ test('phone S8: the result line says how many windows were signed out, in Englis
   assert.deepEqual(said(0), ['No other window was signed in.', 'No había otra ventana con sesión.']);
   assert.deepEqual(said(1), ['Signed out 1 other window.', 'Se cerró la sesión de 1 ventana más.']);
   assert.deepEqual(said(3), ['Signed out 3 other windows.', 'Se cerró la sesión de 3 ventanas más.']);
+});
+
+// #115: idle sleep in Settings, a switch and a threshold in minutes, under the rows (the six rows stay).
+test('#115: the idle-sleep setting sits under the rows, with its name, help text, minutes field and error in English and Spanish', () => {
+  assert.equal(SETTINGS_ROWS.some((row: { id: string }) => row.id === 'idleSleep'), false, 'the six rows stay as they are');
+  const { key, hintKey, minutesKey, unitKey, invalidKey } = IDLE_SLEEP_SETTING;
+  assert.deepEqual([key, hintKey, minutesKey, unitKey, invalidKey].map((k) => [en[k], es[k]]), [
+    ['Idle sleep', 'Dormir inactivos'],
+    [
+      'Agents that can resume their session (Pi, Claude Code, opencode, Antigravity) go to sleep after this many minutes finished with no typing, and wake in that same session. Applies at once.',
+      'Los agentes que pueden retomar su sesión (Pi, Claude Code, opencode, Antigravity) se duermen tras estos minutos con su turno terminado y sin que escribas, y despiertan en esa misma sesión. Se aplica al momento.',
+    ],
+    ['Minutes finished before it sleeps', 'Minutos con su turno terminado antes de dormir'],
+    ['min', 'min'],
+    ['Enter a whole number of minutes from 1 to 10080.', 'Escribe un número entero de minutos, de 1 a 10080.'],
+  ]);
+});
+
+test('#115: the idle-sleep switch says Encendido or Apagado, cannot be pressed before the setting is read, and says Guardando… while it saves', () => {
+  assert.deepEqual(idleSleepSwitchView(null), { checked: false, disabled: true, busy: false, wordKey: 'settings.switch.off', minutes: '' });
+  assert.deepEqual(idleSleepSwitchView({ on: true, minutes: 240 }), { checked: true, disabled: false, busy: false, wordKey: 'settings.switch.on', minutes: '240' });
+  assert.deepEqual(idleSleepSwitchView({ on: false, minutes: 30 }), { checked: false, disabled: false, busy: false, wordKey: 'settings.switch.off', minutes: '30' });
+  const saving = idleSleepSwitchView({ on: true, minutes: 30 }, { busy: true });
+  assert.deepEqual(saving, { checked: true, disabled: true, busy: true, wordKey: 'night.switch.saving', minutes: '30' });
+  assert.deepEqual([es[saving.wordKey], en[saving.wordKey]], ['Guardando…', 'Saving…']);
+});
+
+test('#115: the minutes field takes a whole number from 1 to 10080; anything else is refused before it is sent', () => {
+  for (const [text, minutes] of [['30', 30], [' 45 ', 45], ['1', 1], ['10080', 10080], ['240', 240]] as const) assert.equal(idleSleepMinutesFrom(text), minutes, text);
+  for (const text of ['0', '10081', '1.5', '1e2', '-5', 'abc', '', ' ', '30 min', '0x1e']) assert.equal(idleSleepMinutesFrom(text), null, JSON.stringify(text));
 });

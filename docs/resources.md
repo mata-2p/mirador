@@ -1,6 +1,6 @@
 # RAM and CPU usage
 
-Mirador shows how much memory and CPU each agent it runs uses, how much memory the machine has left, and the gentle-shells running outside Mirador. Everything is read from `/sys` and `/proc`. Mirador never signals, limits or closes any process because of these figures; the only thing it does with them is the launch gate, which delays starting agents while memory is low. The one agent Mirador closes by itself is one left idle for hours (idle sleep, below), and that depends on its attention state, not on memory figures.
+Mirador shows how much memory and CPU each agent it runs uses, how much memory the machine has left, and the gentle-shells running outside Mirador. Everything is read from `/sys` and `/proc`. Mirador never signals, limits or closes any process because of these figures; the only thing it does with them is the launch gate, which delays starting agents while memory is low. The one agent Mirador closes by itself is one left idle for the threshold set in Settings, 4 h by default (idle sleep, below), and that depends on its attention state, not on memory figures.
 
 | Piece | File |
 |---|---|
@@ -11,7 +11,7 @@ Mirador shows how much memory and CPU each agent it runs uses, how much memory t
 | UI | `public/features/resources.js` (poller, terminal badges, Seguimiento helpers), `public/styles/resources.css`, `public/i18n/resources.js` |
 | Loading bar | `public/features/launch-progress.js` and `launch-progress-model.js` (bar text, blocked actions), `public/styles/launches.css`, `public/i18n/launches.js`; it reads `GET /api/terminals/launches` and takes the free memory from the poller above ([agents.md](agents.md#while-agents-open), "While agents open") |
 | Lazy restore | `src/terminals/open-agents.ts` (`lastState`, sleeping records, `wake`), `src/attention/store.ts` (`agentState`, `onAgentState`); UI `public/features/sleeping.js` and `sleeping-model.js`, `public/styles/sleeping.css`, `public/i18n/sleeping.js`. After a restart only agents that were working or waiting reopen; the ones that had finished their turn sleep without a process until woken, which is what saves memory ([agents.md](agents.md#sleeping-agents-lazy-restore), "Sleeping agents") |
-| Idle sleep | `src/terminals/hibernate.ts` (`IdleSleep`, `sleepNote`), `OpenAgents.canSleep`/`sleep`, `AttentionStore.idleHold`, config `idleSleepHours` (`src/config.ts`); wired in `src/server.ts`. See "Idle sleep" below |
+| Idle sleep | `src/terminals/hibernate.ts` (`IdleSleep`, `sleepNote`), `OpenAgents.canSleep`/`resumeKey`/`sleep`, `AttentionStore.idleHold`, config `idleSleep`, `idleSleepMinutes` and `idleSleepHours` (`src/config.ts`, `idleSleepMs`), Settings route `src/http/routes/idle-sleep.ts`; wired in `src/server.ts`. See "Idle sleep" below |
 
 ## Where each figure comes from
 
@@ -65,17 +65,27 @@ The low-memory threshold is a named constant in `resources-model.js`. Below abou
 
 ## Idle sleep
 
-An open agent whose turn has been finished for `idleSleepHours` (config, default 4, `0` turns it off, at most 168; a fraction such as `0.5` is allowed; any other value logs one line at startup and the default applies) goes to sleep while Mirador runs, the way R5a leaves finished agents asleep after a restart. An idle agent holds about 0.8-1.3 GB (pi and its MCP servers). There is no switch in the UI.
+An open agent that can resume its session, one whose catalog entry has a `resume` argv (`src/agents/catalog.ts`: Pi, Claude Code, opencode and Antigravity), goes to sleep while Mirador runs once its turn has been finished for the threshold, the way R5a leaves finished agents asleep after a restart. An idle agent holds about 0.8-1.3 GB (the agent and its MCP servers). Codex, Gemini CLI, Kimi and any agent without a `resume` argv never sleep from idleness, and neither does an agent that has not recorded a session to resume yet (a pi session file from gentle-shell's bridge; a session id from Claude Code's or Antigravity's hooks or opencode's plugin).
 
-1. **The idle clock** starts when the agent's attention state becomes `finished` (`AttentionStore.agentState`), and starts again when the user types into its terminal. The terminal's own replies, such as focus reports, do not count. Any other state stops the clock: an agent that is working, waiting for the user (a `blocked` or `prompt` token) or whose state is unknown never sleeps.
+**Settings → Dormir inactivos / Idle sleep** has a switch (on/off) and the threshold in minutes, 240 (4 h) by default. A change is saved in `config.json` and applies at once, with no restart: switched off, no clock runs and a save turn under way no longer closes its agent; with a new threshold, every finished agent counts it from the change. The same values are config keys:
+
+- `idleSleep`: `false` turns idle sleep off; any value other than `true` or `false` logs one line at startup (`idleSleep must be true or false; the default (on) applies`).
+- `idleSleepMinutes`: the threshold, a whole number of minutes from 1 to 10080 (one week). When set it wins over `idleSleepHours`; any other value logs one line at startup (`idleSleepMinutes must be a whole number of minutes from 1 to 10080; idleSleepHours or the default (240) applies`).
+- `idleSleepHours`: still read when `idleSleepMinutes` is not set: hours from 0 to 168, `0` turns idle sleep off, a fraction such as `0.5` is allowed; any other value logs one line at startup and the default (4) applies.
+
+API: `GET /api/settings/idle-sleep` answers `{ on, minutes }`; `PUT /api/settings/idle-sleep` with `{ on, minutes }` saves both and answers the same. Any other body is a 400 `idle_sleep_invalid` (`on must be true or false`, `minutes must be a whole number from 1 to 10080`, `only on and minutes can be saved`) and `config.json` is left as it was. The doctor report (`pnpm run doctor`) lists the same config problems.
+
+1. **The idle clock** starts when the agent's attention state becomes `finished` (`AttentionStore.agentState`), and starts again when the user types into its terminal. The terminal's own replies, such as focus reports, do not count. Any other state stops the clock: an agent that is working, waiting for the user (a `blocked` or `prompt` token), stopped with an error or whose state is unknown never sleeps.
 2. **When the clock runs out**, the agent stays open and its clock starts again if any of these holds:
    - gentle-shell reports an in-progress Todo for it;
    - the night shift is deciding about it or left it for the user (a `deciding` or `deferred` night state, `AttentionStore.idleHold`);
-   - its bridge never reported a pi session file to resume.
+   - it has no recorded session to resume (`OpenAgents.canSleep`).
 
-   Otherwise it gets `sleepNote()` through the night shift's note path (`NightService.sendNote`, the method execution notes use), framed as "Note from Mirador, which puts idle agents to sleep". The note says the agent resumes when the user wakes it, naming them as config `ownerName` says ("the user" unset; `IdleSleep` option `ownerName`), and asks it to save its session summary with `mem_session_summary` and end its turn. The night log records it as Mirador's note (`note.from: "mirador"`, its own policy reason), shown in the night report as "Nota de Mirador"; unlike the user's notes it moves no live night card.
-3. **Once that save turn ends** (the state goes to working, then finished again), Mirador closes the agent the way × does: `TerminalRegistry.close`, which also stops its scope. Its record becomes a sleeping record of the same shape R5a persists (`lastState: "finished"`, its session file), so it is listed under "💤 Dormidos" and a restart keeps it asleep. Despertar resumes its pi session through the launch gate, and Olvidar drops it. The server logs one line per agent: `mirador: the open agent of workspace "<ws>" folder "<rel>" sleeps: …`.
-4. **It stays open**, with its clock starting again once it is finished, in these cases:
+   A **Pi agent** then gets `sleepNote()` through the night shift's note path (`NightService.sendNote`, the method execution notes use), framed as "Note from Mirador, which puts idle agents to sleep". The note says the agent resumes when the user wakes it, naming them as config `ownerName` says ("the user" unset; `IdleSleep` option `ownerName`), and asks it to save its session summary with `mem_session_summary` and end its turn. The night log records it as Mirador's note (`note.from: "mirador"`, its own policy reason), shown in the night report as "Nota de Mirador"; unlike the user's notes it moves no live night card. Without the night service a Pi agent cannot save first, so it stays open.
+
+   **Claude Code, opencode and Antigravity** get no note: they keep their own transcript, so step 3 happens at once.
+3. **Once that save turn ends** (the state goes to working, then finished again; at once for the agents without a note), Mirador closes the agent the way × does: `TerminalRegistry.close`, which also stops its scope. Its record becomes a sleeping record of the same shape R5a persists (`lastState: "finished"`, its session file or session id), so it is listed under "💤 Dormidos" and a restart keeps it asleep. Despertar resumes its own session through the launch gate (`--session <file>` for Pi, `--resume <id>` for Claude Code, `--session <id>` for opencode, `--conversation <id>` for Antigravity), and Olvidar drops it. The server logs one line per agent: `mirador: the open agent of workspace "<ws>" folder "<rel>" sleeps: …`.
+4. **A Pi agent stays open**, with its clock starting again once it is finished, in these cases:
    - the user types into it during the save turn;
    - it waits for the user during the save turn;
    - the note cannot go out (no bridge connected);

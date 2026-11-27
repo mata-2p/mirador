@@ -5,6 +5,15 @@ All notable changes to Mirador, written for the people who run it. The format fo
 
 ## [Unreleased]
 
+### Added
+
+- Idle sleep now covers every agent that can resume its session: Pi, Claude Code, opencode and Antigravity (#115).
+  One finished for the threshold with no typing goes to sleep and, woken, resumes its own session (`--session`,
+  `--resume` or `--conversation`). Pi still saves its session summary first; the others are closed at once and
+  leave a sleeping record. Codex, Gemini CLI, Kimi and an agent with no recorded session never sleep from idleness.
+  **Ajustes / Settings** has a switch and the threshold in minutes, which apply at once with no restart (config
+  `idleSleep` and `idleSleepMinutes`; `idleSleepHours` is still read, and explicit minutes win). The default stays 4 h.
+
 ### Changed
 
 - On Linux x64 and arm64 with glibc 2.28 or newer, the one-line install (`curl … bootstrap.sh | sh`) installs the

@@ -4,7 +4,7 @@
 
 Mirador is a local web dashboard for running many coding agents on one Linux or WSL2 machine without filling its memory. When you open several agents at once, it starts them in batches and waits for free memory, leaves finished ones asleep after a restart, and shows where each project left off.
 
-- **Memory:** a launch gate for agents opened in a row; Pi agents finished for 4 h go to sleep ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), and after a restart every finished agent stays asleep; on Linux, one systemd scope per agent.
+- **Memory:** a launch gate for agents opened in a row; agents that can resume their session go to sleep after 4 h finished (configurable in [Settings](docs/resources.md#idle-sleep), in minutes), and after a restart every finished agent stays asleep; on Linux, one systemd scope per agent.
 - **Where it left off:** each project shows where its last session stopped.
 - **Stays on the machine:** no telemetry, no accounts, the server listens on 127.0.0.1 only.
 
@@ -20,7 +20,7 @@ English · [Español](README.es.md)
 
 What Mirador focuses on:
 
-- **Memory.** Before the launch gate, opening 11 agents at once filled 24 GB of RAM and the swap, and systemd-oomd killed agents and the Mirador window. Now a [launch gate](docs/agents.md#opening-many-agents-without-filling-the-memory) holds agents opened in a row while MemAvailable is under the reserve. Pi agents finished for 4 h go to sleep ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), and after a restart every finished agent stays asleep; on Linux each agent gets [one systemd scope](docs/agents.md#one-systemd-scope-per-terminal), so an out-of-memory kill takes one agent.
+- **Memory.** Before the launch gate, opening 11 agents at once filled 24 GB of RAM and the swap, and systemd-oomd killed agents and the Mirador window. Now a [launch gate](docs/agents.md#opening-many-agents-without-filling-the-memory) holds agents opened in a row while MemAvailable is under the reserve. Agents that can resume their session go to sleep after 4 h finished (configurable in [Settings](docs/resources.md#idle-sleep), in minutes), and after a restart every finished agent stays asleep; on Linux each agent gets [one systemd scope](docs/agents.md#one-systemd-scope-per-terminal), so an out-of-memory kill takes one agent.
 - **Where it left off.** Each project shows where its last session stopped, from Engram or Claude Code's last messages ([details](docs/attention.md#where-it-left-off)); a [tracking view](docs/attention.md#tracking-view) follows the day.
 - **For gentle-shell users.** A [night shift](docs/extending.md#night-shift) whose autopilot answers agents' questions while you are away, and [MCP servers per project](docs/agents.md#mcp-servers-per-project) to turn off the ones a folder does not need.
 
@@ -66,7 +66,7 @@ A local dashboard for your project folders, with agent terminals inside it. Each
 | [Attention inbox](docs/attention.md#attention-inbox) | **Waiting for you (N)** lists the agent terminals that need your answer or finished their turn. |
 | [One systemd scope per terminal](docs/agents.md#one-systemd-scope-per-terminal) | On Linux each terminal runs in its own systemd user scope, so an out-of-memory kill takes one terminal, not all of them. |
 | [Launch gate for memory](docs/agents.md#opening-many-agents-without-filling-the-memory) | Agents opened in a row start in batches and wait while free memory is under the reserve. |
-| [Sleeping agents](docs/agents.md#sleeping-agents-lazy-restore) | After a restart, every agent that had finished its turn sleeps with no process until you wake it; while Mirador runs, a Pi agent finished for `idleSleepHours` (4 h by default) saves its session summary and sleeps too, which needs gentle-shell's bridge and a recorded pi session ([idle sleep](docs/resources.md#idle-sleep)). |
+| [Sleeping agents](docs/agents.md#sleeping-agents-lazy-restore) | After a restart, every agent that had finished its turn sleeps with no process until you wake it; while Mirador runs, a Pi, Claude Code, opencode or Antigravity agent finished for 4 h (set in Settings, in minutes) sleeps too, once it has recorded a session to resume; Pi saves its session summary first ([idle sleep](docs/resources.md#idle-sleep)). |
 | [Reopening after a restart](docs/agents.md#reopening-agents-after-a-restart) | Open agents come back at the next start, in their folder and, with gentle-shell, pi, Claude Code, opencode or Antigravity, in their session. |
 | [Opening several agents](docs/agents.md#opening-several-agents) | Mark folders in selection mode, or save them as the workspace's projects, and open one agent in each. |
 | [MCP servers per project](docs/agents.md#mcp-servers-per-project) | Turn off the MCP servers a folder does not need, which saves memory in every agent opened there. |
@@ -88,14 +88,14 @@ The agents Mirador knows, from [`src/agents/catalog.ts`](src/agents/catalog.ts),
 | Agent | Command | Reports its state | Resumes its session after a restart | Sleeps |
 |---|---|---|---|---|
 | Pi (gentle-shell) | `gentle-shell` | Yes | `--session <file>` | After 4 h idle, and after a restart |
-| Claude Code | `claude` | Yes | `--resume <id>` | Only after a restart |
-| opencode | `opencode` | Yes | `--session <id>` | Only after a restart |
-| Antigravity | `agy` | Yes | `--conversation <id>` | Only after a restart |
+| Claude Code | `claude` | Yes | `--resume <id>` | After 4 h idle, and after a restart |
+| opencode | `opencode` | Yes | `--session <id>` | After 4 h idle, and after a restart |
+| Antigravity | `agy` | Yes | `--conversation <id>` | After 4 h idle, and after a restart |
 | Codex | `codex` | No | No, starts fresh | No |
 | Gemini CLI | `gemini` | No | No, starts fresh | No |
 | Kimi | `kimi` | No | No, starts fresh | No |
 
-Only an agent that reports it finished its turn sleeps, so the ones that report nothing reopen at every start. Pi agents also sleep while Mirador runs ([idle sleep](docs/resources.md#idle-sleep)); the others sleep only after a restart ([sleeping agents](docs/agents.md#sleeping-agents-lazy-restore)).
+Only an agent that reports it finished its turn sleeps, so the ones that report nothing reopen at every start and never sleep. The ones that report it sleep both while Mirador runs ([idle sleep](docs/resources.md#idle-sleep)) and after a restart ([sleeping agents](docs/agents.md#sleeping-agents-lazy-restore)).
 
 ## How Mirador compares
 
@@ -107,7 +107,7 @@ Other tools run coding agents side by side too.
 | Where each project left off | Mirador |
 | Agents back in their session after a restart | Mirador, Herdr TUI (on by default), cmux (agents whose hooks saved a session) |
 | Agents opened in a row that wait for free memory, one systemd scope per agent, and, after a restart, only the agents that had not finished reopened | Mirador |
-| Idle agents put to sleep to free memory | Mirador (Pi agents finished for 4 h go to sleep ([`idleSleepHours`](docs/resources.md#idle-sleep), configurable), and after a restart every finished agent stays asleep), cmux (`terminal.agentHibernation`, opt-in), Herdr TUI (community plugins) |
+| Idle agents put to sleep to free memory | Mirador (agents that can resume their session go to sleep after 4 h finished (configurable in [Settings](docs/resources.md#idle-sleep), in minutes), and after a restart every finished agent stays asleep), cmux (`terminal.agentHibernation`, opt-in), Herdr TUI (community plugins) |
 | A night shift and MCP servers per project for gentle-shell | Mirador |
 | Remote machines over SSH | Herdr TUI, Herdr app, cmux (`cmux ssh`), Emdash (SSH/SFTP), Claude Code Desktop |
 | A phone app | Herdr app (iPhone, iPad, Android), Paradev (Apple, Android), Claude Code Desktop (Claude mobile app), cmux (iPhone beta) |
@@ -132,9 +132,9 @@ The table lists what each one's own site or repository said on 2026-11-26. A das
 | Agents in git worktrees | No | — | — | Yes | Optional⁵ | — | Yes |
 | Remote machines and phone | [`ssh -L` tunnel](docs/security.md#opening-mirador-from-another-machine)¹ | SSH | SSH, phone apps³ | Phone, cloud⁴ | SSH, cloud, phone⁵ | SSH, iPhone beta⁶ | SSH/SFTP |
 | Agent sessions after a restart | Resumed¹ | On by default² | No³ | — | — | With hooks⁶ | — |
-| Idle agents put to sleep | Pi agents¹ | Plugins² | — | — | — | Opt-in⁶ | — |
+| Idle agents put to sleep | Agents that resume their session¹ | Plugins² | — | — | — | Opt-in⁶ | — |
 
-¹ Mirador: a local web dashboard in a browser window; macOS is experimental; no app, but the inbox is usable on a phone's browser through the same tunnel ([experimental](docs/attention.md#the-phone-inbox-is-experimental)); after a restart gentle-shell, pi, Claude Code, opencode and Antigravity agents resume their session and the others start fresh in their folder; Pi agents sleep after `idleSleepHours` (4 h by default) finished, and after a restart every agent that had finished stays asleep.<br>
+¹ Mirador: a local web dashboard in a browser window; macOS is experimental; no app, but the inbox is usable on a phone's browser through the same tunnel ([experimental](docs/attention.md#the-phone-inbox-is-experimental)); after a restart gentle-shell, pi, Claude Code, opencode and Antigravity agents resume their session and the others start fresh in their folder; Pi, Claude Code, opencode and Antigravity agents sleep after 4 h finished by default (set in Settings, in minutes), and after a restart every agent that had finished stays asleep.<br>
 ² Herdr TUI: one Rust binary in the terminal; Windows is in beta; "Native agent session restore is enabled by default" (`[session] resume_agents_on_restore`, [session state](https://herdr.dev/docs/session-state/)); idle agents sleep only through community plugins such as herdr-idle and herdr-hibernate ([plugins](https://herdr.dev/tui/plugins/)).<br>
 ³ Herdr app: a native desktop app ([herdrdev/herdr-app](https://github.com/herdrdev/herdr-app)); macOS on Apple silicon; phone apps for iPhone, iPad and Android; after a restart its panes come back as a shell, since the FAQ says it "doesn't restart an agent or resume its work in progress".<br>
 ⁴ Paradev: also a CLI, an SDK and an MCP server; "Windows is not yet available"; the phone app is for Apple and Android devices.<br>
