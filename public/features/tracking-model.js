@@ -52,6 +52,9 @@ function agentEntry(terminal, item, now) {
   // With no card there is no kind, label or detail, and the time counts from the terminal's start.
   const live = CARD_STATES.has(state) && Boolean(item);
   const since = live ? item.since : terminal.createdAt;
+  // Idle sleep keeps it awake: the name of the program it left running (GET /api/terminals `awake`), never its
+  // arguments; only an entry that has one carries `awake`.
+  const awake = state !== 'exited' && typeof terminal.awake?.name === 'string' && terminal.awake.name ? terminal.awake.name : null;
   return {
     id: terminal.id,
     title: terminal.title,
@@ -66,6 +69,7 @@ function agentEntry(terminal, item, now) {
     since,
     minutes: elapsedMinutes(since, now),
     exitCode: state === 'exited' ? terminal.exitCode ?? null : null,
+    ...(awake ? { awake } : {}),
   };
 }
 

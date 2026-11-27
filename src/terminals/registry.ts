@@ -5,6 +5,8 @@ import { scopeCommand, scopeUnit } from './scopes.ts';
 
 /** The subset of node-pty's IPty that the registry needs (a port, so tests can fake it). */
 export interface PtyProcess {
+  /** The pty child's pid (node-pty has it; with scopes the scope root, as systemd-run execs in place). */
+  readonly pid?: number;
   onData(listener: (data: string) => void): void;
   /** node-pty gives the signal that ended the process; 0 or absent when none did. */
   onExit(listener: (event: { exitCode: number; signal?: number }) => void): void;
@@ -409,6 +411,18 @@ export class TerminalRegistry {
 
   get(id: string): TerminalInfo | undefined {
     return this.terminals.get(id)?.info;
+  }
+
+  /**
+   * Where running terminal `id` runs: the pid of its pty child (its bash, which then runs the agent) and,
+   * with scopes, its scope unit (`mirador-<kind>-<id>.scope`). Undefined when it is unknown, has exited
+   * or its pid is not known. Only read by idle sleep's background-work check (src/terminals/background-work.ts).
+   */
+  processOf(id: string): { pid: number; scope: string | null } | undefined {
+    const terminal = this.terminals.get(id);
+    const pid = terminal?.pty.pid;
+    if (!terminal || terminal.info.status !== 'running' || typeof pid !== 'number' || !(pid > 0)) return undefined;
+    return { pid, scope: this.options.scopes ? `${scopeUnit(terminal.info.kind, terminal.info.id)}.scope` : null };
   }
 
   /**

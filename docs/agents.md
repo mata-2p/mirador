@@ -116,4 +116,6 @@ Every gentle-shell agent starts all the MCP servers it knows, and each one takes
 - **Git:** when the file is untracked and not ignored, Mirador appends its path (`/.pi/mcp.json`, or `/<sub>/.pi/mcp.json` for a folder inside a repo) to the repo's `.git/info/exclude` once, so it never shows in `git status`. A tracked file is not excluded: the dialog's **Cómo funciona** says the change will show in git, and saving confirms it.
 - **Trust:** pi reads `.pi/mcp.json` only in projects it trusts. Mirador takes the nearest saved decision for the folder or a parent in `trust.json`, else `defaultProjectTrust` (`always` or `never`); otherwise, or when an extension may decide, it says it cannot tell. It never grants trust nor starts agents with `-a`: when the project is not trusted, or it cannot tell, the dialog says to open `/mcp` in an agent of that project and trust it.
 
+- **Idle sleep:** the same two files tell a Pi agent's MCP servers from work it left running. A process whose command line is one of their servers (`command` and `args`), even launched through `sh -c`, is the agent's own and never keeps it awake ([resources.md](resources.md#background-work-the-agent-left-running)).
+
 API: `GET /api/mcp?ws=&rel=` and `PUT /api/mcp` with `{ ws, rel, disabled: [names] }` (see docs/extending.md).

@@ -6,6 +6,7 @@ import { nightAttention, nightService, taskText, type NightService } from '../..
 import { randomUUID } from 'node:crypto';
 import { launchGate, type LaunchRunStatus } from '../../system/memory-gate.ts';
 import { MAX_INSTRUCTION_CHARS, openAgentBatch, type BatchDelegation, type BatchResult } from '../../terminals/open-many.ts';
+import { idleSleepOf } from '../../terminals/hibernate.ts';
 import { openAgentsOf } from '../../terminals/open-agents.ts';
 import type { TerminalKind } from '../../terminals/registry.ts';
 import { MAX_PROJECTS } from '../../workspaces/store.ts';
@@ -123,10 +124,17 @@ export const terminalRoutes: RouteModule = (ctx) => {
       method: 'GET',
       path: '/api/terminals',
       // Agent terminals carry their attention state (AttentionStore.agentState: working, waiting,
-      // finished, error or unknown), from their hooks or their OSC 7501 reports.
+      // finished, error or unknown), from their hooks or their OSC 7501 reports. One that idle sleep keeps
+      // awake because of work it left running also carries `awake: { name }`, the program's name only
+      // (IdleSleep.awake), for its card; the inbox (notifications, the phone) never carries it.
       handler: ({ res }) => {
         const attention = nightAttention(ctx.terminals);
-        sendJson(res, 200, ctx.terminals.list().map((info) => (info.kind === 'agent' ? { ...info, agentState: attention?.agentState?.(info.id) ?? 'unknown' } : info)));
+        const idle = idleSleepOf(ctx.terminals);
+        sendJson(res, 200, ctx.terminals.list().map((info) => {
+          if (info.kind !== 'agent') return info;
+          const awake = idle?.awake(info.id);
+          return { ...info, agentState: attention?.agentState?.(info.id) ?? 'unknown', ...(awake ? { awake } : {}) };
+        }));
       },
     },
     {

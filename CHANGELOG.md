@@ -13,6 +13,18 @@ All notable changes to Mirador, written for the people who run it. The format fo
   leave a sleeping record. Codex, Gemini CLI, Kimi and an agent with no recorded session never sleep from idleness.
   **Ajustes / Settings** has a switch and the threshold in minutes, which apply at once with no restart (config
   `idleSleep` and `idleSleepMinutes`; `idleSleepHours` is still read, and explicit minutes win). The default stays 4 h.
+- Idle sleep keeps an agent awake while it left work running (#115): a process orphaned in its scope (an
+  `npm run dev &` whose shell exited), or a live process below a shell it started once its turn is finished. Its
+  own MCP servers and helpers do not count: those it starts with no shell in between, those it starts through a
+  shell wired to it as a stdio MCP server (stdin and stdout a pipe or a socket: `bash start.sh`, `sh -c '…'`), and
+  for Pi any process whose command line is an MCP server Mirador reads for that folder, even through `sh -c`. Its card in **Seguimiento /
+  Tracking** says why with the program's name only (**Despierto: npm sigue corriendo / Awake: npm is still
+  running**), and the log adds the PID, one line per reason (a loop that runs a new child every round keeps one
+  line and one name); neither shows the command line, and browser notifications and the phone's inbox never
+  carry it. The card line goes away once the program ends, and the agent sleeps at its clock's next tick. A
+  check that cannot be completed (a read error, more than 5000 processes) keeps the agent open, with one log
+  line. Without scopes an orphan cannot be seen, so the agent sleeps as before (#1); without `/proc` (macOS)
+  the check is skipped and the agent sleeps as before.
 
 ### Changed
 

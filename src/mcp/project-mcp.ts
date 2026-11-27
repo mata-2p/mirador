@@ -282,6 +282,26 @@ export async function readProjectMcp(options: ProjectMcpOptions): Promise<Projec
 }
 
 /**
+ * The command line (`command`, then its `args`) of every stdio server an agent in the folder may start:
+ * those of the user file and those the project file declares, on or off, the same two files
+ * readProjectMcp reads. Idle sleep tells an agent's own MCP servers apart by them
+ * (src/terminals/background-work.ts). Only read; a file that cannot be read gives none, and it never throws.
+ */
+export async function mcpServerCommands(options: ProjectMcpOptions): Promise<string[][]> {
+  const user = (await userServers(options.agentDir)).servers;
+  const project = await readProjectFile(options.folder).then((file) => (file.doc.mcpServers as Json | undefined) ?? {}, () => ({}) as Json);
+  const commands: string[][] = [];
+  for (const servers of [user, project]) {
+    for (const entry of Object.values(servers)) {
+      if (!isObject(entry) || typeof entry.command !== 'string' || !entry.command.trim()) continue;
+      const args = Array.isArray(entry.args) ? entry.args.filter((arg): arg is string => typeof arg === 'string') : [];
+      commands.push([entry.command.trim(), ...args]);
+    }
+  }
+  return commands;
+}
+
+/**
  * Applies `disabled` (every listed server not in it is wanted on) to the project file. Turning a
  * server off sets `enabled: false` on its entry, or adds a bare `{ "enabled": false }` override;
  * turning it on removes that `enabled` again (and a bare override as a whole). Returns whether

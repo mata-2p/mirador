@@ -11,6 +11,8 @@ import { AttentionStore } from './attention/store.ts';
 import { nightAttention, nightService, whenNightService } from './night/service.ts';
 import { OpenAgents, openAgentsPath, provideOpenAgents, stopPreviousScopes } from './terminals/open-agents.ts';
 import { IdleSleep, provideIdleSleep } from './terminals/hibernate.ts';
+import { backgroundCheck } from './terminals/background-work.ts';
+import { gentleShellAgentDir } from './mcp/project-mcp.ts';
 import { InvalidFolderError } from './folders/tree.ts';
 import { EngramClient, EngramUnavailableError } from './memory/engram.ts';
 import { configureCallMeter, configurePiConcurrency, configurePiHold } from './memory/translate.ts';
@@ -356,6 +358,13 @@ async function main(): Promise<void> {
       idleMs: idleSleepMs(config),
       // Config `ownerName`: who the save note says wakes the agent ("the user" unset).
       ownerName: () => ctx.config.ownerName,
+      // Work the agent left running keeps it awake (#115): an orphan in its scope, or a live process below a
+      // shell it started; its own MCP servers (those of gentle-shell's mcp.json and the folder's .pi/mcp.json for Pi) do not count.
+      background: backgroundCheck({
+        registry: terminals,
+        agentCommand: config.agentCommand,
+        agentDir: () => gentleShellAgentDir((ctx.config as { gentleShellAgentDir?: unknown }).gentleShellAgentDir),
+      }),
     });
     idle.start();
     provideIdleSleep(terminals, idle);
