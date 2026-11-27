@@ -95,7 +95,7 @@ The agents Mirador knows, from [`src/agents/catalog.ts`](src/agents/catalog.ts),
 | Gemini CLI | `gemini` | No | No, starts fresh | No |
 | Kimi | `kimi` | No | No, starts fresh | No |
 
-Only an agent that reports it finished its turn sleeps, so the ones that report nothing reopen at every start and never sleep. The ones that report it sleep both while Mirador runs ([idle sleep](docs/resources.md#idle-sleep)) and after a restart ([sleeping agents](docs/agents.md#sleeping-agents-lazy-restore)).
+Only an agent that reports it finished its turn sleeps, so the ones that report nothing reopen at every start and never sleep. The ones that report it sleep both while Mirador runs ([idle sleep](docs/resources.md#idle-sleep)) and after a restart ([sleeping agents](docs/agents.md#sleeping-agents-lazy-restore)). Idle sleep for Claude Code, opencode and Antigravity arrives in 0.3.0; in 0.2.0 only Pi agents go to sleep while Mirador runs.
 
 ## How Mirador compares
 

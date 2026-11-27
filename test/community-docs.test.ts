@@ -285,3 +285,23 @@ test('README.md and README.es.md name the same tools in the "You want… / Look 
     assert.deepEqual([...tools(es[index].look)].sort(), [...tools(row.look)].sort(), `row ${index + 1}: "${row.want}" / "${es[index].want}"`);
   });
 });
+
+test('both READMEs say idle sleep for Claude Code, opencode and Antigravity arrives in 0.3.0, after the per-agent table (#115, L16)', () => {
+  for (const [file, sentence, table] of [
+    [
+      'README.md',
+      'Idle sleep for Claude Code, opencode and Antigravity arrives in 0.3.0; in 0.2.0 only Pi agents go to sleep while Mirador runs.',
+      'What Mirador does with each agent',
+    ],
+    [
+      'README.es.md',
+      'El dormir por inactividad para Claude Code, opencode y Antigravity llega en la 0.3.0; en la 0.2.0 solo los agentes Pi se duermen mientras Mirador corre.',
+      'Qué hace Mirador con cada agente',
+    ],
+  ]) {
+    const text = readFileSync(join(ROOT, file), 'utf8');
+    assert.equal(text.split(sentence).length - 1, 1, `${file}: the 0.3.0 sentence appears once`);
+    const after = text.indexOf(table);
+    assert.ok(after >= 0 && text.indexOf(sentence) > after, `${file}: the sentence follows the per-agent table`);
+  }
+});
