@@ -91,6 +91,17 @@ export class LaunchNonces {
     this.pending.delete(key);
     return expiresAt !== undefined && now <= expiresAt;
   }
+
+  /**
+   * Forgets every link still pending, so none of them opens a session afterwards.
+   *
+   * "Sign out the other windows" ends what the other sessions hold open; a link already handed out
+   * is the same risk one step earlier, and docs/security.md promises the other windows need a new
+   * one (#68).
+   */
+  clear(): void {
+    this.pending.clear();
+  }
 }
 
 /**

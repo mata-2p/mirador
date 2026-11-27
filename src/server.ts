@@ -319,7 +319,11 @@ async function main(): Promise<void> {
   for (const module of ROUTE_MODULES) for (const route of await module(ctx)) router.add(route);
   // The UI's start-up state in one request, from the config and workspaces routes registered above.
   router.add(bootstrapRoute((path) => routeJson(router, path)));
-  router.add(signOutOthersRoute(sessions, (tokens) => closers.close(tokens)));
+  // A link already handed out is the other windows' next way in, so the sign-out drops those too (#68).
+  router.add(signOutOthersRoute(sessions, (tokens) => {
+    closers.close(tokens);
+    nonces.clear();
+  }));
   readNightStatus = async () => {
     const status = await routeJson(router, '/api/night');
     return status && typeof status === 'object' ? (status as NightStatusView) : null;

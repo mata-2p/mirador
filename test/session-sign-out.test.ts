@@ -292,6 +292,22 @@ test('S8: a cleared session\'s open inbox stream ends; the caller\'s stream keep
   }
 });
 
+// #68: a launch link issued before the sign-out must not open a session after it. docs/security.md
+// says the other windows need a new link; a link still in flight was the exception.
+test('a launch link issued before the sign-out cannot open a session after it', async () => {
+  const caller = await login();
+  await alone(caller);
+  // Issued now, not yet redeemed, still inside its 60 s lifetime: exactly what `mirador link` hands out.
+  const pending = await bootstrap();
+  assert.equal((await signOutOthers(caller)).status, 200);
+  const refused = await redeem(pending);
+  // The server answers an unknown or used link with 403 (src/server.ts, "invalid or used launch link").
+  assert.equal(refused.status, 403, 'the pending link must be refused after the sign-out');
+  // And it opened nothing: no session exists to use.
+  const body = (await refused.json().catch(() => ({}))) as { token?: string };
+  assert.equal(body.token, undefined);
+});
+
 test('S11: a wrong Host, another method or path, and an altered or truncated token clear nothing', async () => {
   const caller = await login();
   await alone(caller);
