@@ -8,7 +8,7 @@
 // cgroup.procs trees in a scratch dir.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OpenAgents } from '../src/terminals/open-agents.ts';
@@ -153,6 +153,14 @@ async function proc(m: Mirador, pid: number, name: string, ppid: number, argv: s
 }
 const ended = (m: Mirador, pid: number) => rm(join(m.roots.proc, String(pid)), { recursive: true, force: true });
 
+/** /proc/<pid>/fd/0 and /1 as the kernel shows them: `socket:[n]`, `pipe:[n]`, `/dev/null`, a file. */
+async function stdio(m: Mirador, pid: number, stdin: string, stdout: string) {
+  const dir = join(m.roots.proc, String(pid), 'fd');
+  await mkdir(dir, { recursive: true });
+  await symlink(stdin, join(dir, '0'));
+  await symlink(stdout, join(dir, '1'));
+}
+
 /** The scope's cgroup.procs: every process in the agent's scope. */
 async function scope(m: Mirador, id: string, pids: number[]) {
   const dir = scopeDir(m.roots, UID, `mirador-agent-${id}.scope`);
@@ -235,6 +243,61 @@ test('an MCP server launched with `sh -c` whose command line is one configured f
   finished(m, info.id, 't-2');
   assert.equal(m.registry.get(info.id), undefined, 'asleep');
   assert.deepEqual(m.stopped, [[`mirador-agent-${info.id}`]]);
+});
+
+test('an MCP server the agent started through a shell (`bash start.sh`, `sh -c \'…; exit\'`), its stdin and stdout connected to the agent, is its own: the agent sleeps', async () => {
+  const m = await mirador();
+  const id = claudeIn(m, 'mcp-shell', 5050);
+  await proc(m, 5050, 'bash', 1, ['bash', '--rcfile', '/run/mirador/agent.bashrc', '-i']);
+  await proc(m, 5051, 'claude', 5050, ['claude', '--resume', 'sess-mcp-shell']);
+  // Claude Code (Bun) hands its MCP servers socket pairs; an agent built on Node hands them pipes.
+  await proc(m, 5052, 'bash', 5051, ['bash', '/opt/mcp/start.sh', SECRET]);
+  await stdio(m, 5052, 'socket:[700]', 'socket:[701]');
+  await proc(m, 5053, 'node', 5052, ['node', '/opt/mcp/server.js', SECRET]);
+  await stdio(m, 5053, 'socket:[700]', 'socket:[701]');
+  await proc(m, 5054, 'sh', 5051, ['sh', '-c', `node /opt/mcp/other.js ${SECRET}; exit $?`]);
+  await stdio(m, 5054, 'pipe:[710]', 'pipe:[711]');
+  await proc(m, 5055, 'node', 5054, ['node', '/opt/mcp/other.js', SECRET]);
+  await stdio(m, 5055, 'pipe:[710]', 'pipe:[711]');
+  await scope(m, id, [5050, 5051, 5052, 5053, 5054, 5055]);
+  finished(m, id, 't-1');
+  await idleFor(m);
+  assert.equal(m.idle.awake(id), null);
+  assert.equal(m.registry.get(id), undefined, 'asleep');
+  assert.deepEqual(m.stopped, [[`mirador-agent-${id}`]], 'its scope is stopped, its MCP servers with it');
+  assert.deepEqual(m.openAgents.sleeping().map((s) => s.id), [id]);
+  assert.equal(m.logs.filter((line) => SLEEPS.test(line)).length, 1);
+  assert.equal(m.logs.filter((line) => AWAKE.test(line)).length, 0);
+});
+
+test('a background job its Bash tool left running (stdin /dev/null, output to a file or a pipe) still keeps the agent awake', async () => {
+  const m = await mirador();
+  // Claude Code's run_in_background, as seen live: `bash -c …` with stdin /dev/null and its output in a task file.
+  const id = claudeIn(m, 'bg-file', 5060);
+  await proc(m, 5060, 'bash', 1);
+  await proc(m, 5061, 'claude', 5060);
+  await proc(m, 5062, 'bash', 5061, ['/bin/bash', '-c', `sleep 90 ${SECRET}`]);
+  await stdio(m, 5062, '/dev/null', '/tmp/claude-1000/tasks/b1.output');
+  await proc(m, 5063, 'sleep', 5062, ['sleep', '90']);
+  await stdio(m, 5063, '/dev/null', '/tmp/claude-1000/tasks/b1.output');
+  await scope(m, id, [5060, 5061, 5062, 5063]);
+  // A tool shell whose output the agent reads through a pipe, its stdin closed.
+  const other = claudeIn(m, 'bg-pipe', 5070);
+  await proc(m, 5070, 'bash', 1);
+  await proc(m, 5071, 'claude', 5070);
+  await proc(m, 5072, 'bash', 5071, ['/bin/bash', '-c', 'npm run dev']);
+  await stdio(m, 5072, '/dev/null', 'pipe:[720]');
+  await proc(m, 5073, 'npm', 5072, ['npm', 'run', 'dev']);
+  await scope(m, other, [5070, 5071, 5072, 5073]);
+  finished(m, id, 't-1');
+  finished(m, other, 't-1');
+  await idleFor(m);
+  assert.equal(isOpen(m, id), true);
+  assert.equal(isOpen(m, other), true);
+  assert.deepEqual(m.stopped, []);
+  assert.deepEqual(m.idle.awake(id), { name: 'sleep' });
+  assert.deepEqual(m.idle.awake(other), { name: 'npm' });
+  assert.equal(m.logs.filter((line) => AWAKE.test(line)).length, 2);
 });
 
 test('an orphan in the scope (`sh -c \'sleep 1000 &\'`) keeps the agent awake: its name on the card, one log line with name and PID across several checks', async () => {
@@ -374,6 +437,58 @@ test('without scopes a live shell child (kind b) still keeps the agent awake', a
   await idleFor(m);
   assert.equal(isOpen(m, id), true);
   assert.deepEqual(m.idle.awake(id), { name: 'sleep' });
+});
+
+test('with a 1 min threshold (the clock and the 60 s re-read of the reason in the same tick) the agent sleeps once the work ends, without a new turn', async () => {
+  const m = await mirador();
+  m.idle.setIdleMs(MINUTE);
+  const id = claudeIn(m, 'same-tick', 5900);
+  await proc(m, 5900, 'bash', 1);
+  await proc(m, 5901, 'claude', 5900);
+  await proc(m, 6900, 'sleep', 900);
+  await scope(m, id, [5900, 5901, 6900]);
+  finished(m, id, 't-1');
+  m.timers.pass(MINUTE);
+  await m.idle.checked();
+  assert.deepEqual(m.idle.awake(id), { name: 'sleep' }, 'kept awake');
+  await ended(m, 6900);
+  await scope(m, id, [5900, 5901]);
+  for (let minute = 0; minute < 3 && m.registry.get(id); minute++) {
+    m.timers.pass(MINUTE);
+    await m.idle.checked();
+  }
+  assert.equal(m.registry.get(id), undefined, 'asleep within three minutes of the work ending');
+  assert.deepEqual(m.stopped, [[`mirador-agent-${id}`]]);
+  assert.deepEqual(m.openAgents.sleeping().map((s) => s.id), [id]);
+  assert.equal(m.logs.filter((line) => AWAKE.test(line)).length, 1);
+  assert.equal(m.logs.filter((line) => SLEEPS.test(line)).length, 1);
+});
+
+test('typing or a new threshold while the agent is kept awake leaves its clock running: it sleeps once the work ends', async () => {
+  const m = await mirador();
+  m.idle.setIdleMs(MINUTE);
+  const id = claudeIn(m, 'typed-awake', 5950);
+  await proc(m, 5950, 'bash', 1);
+  await proc(m, 5951, 'claude', 5950);
+  await proc(m, 6950, 'sleep', 900);
+  await scope(m, id, [5950, 5951, 6950]);
+  finished(m, id, 't-1');
+  m.timers.pass(MINUTE);
+  await m.idle.checked();
+  assert.deepEqual(m.idle.awake(id), { name: 'sleep' });
+  // The user types while the clock's and the reason's checks are under way, then Settings sets 2 min.
+  m.timers.pass(MINUTE);
+  m.registry.write(id, 'x');
+  await m.idle.checked();
+  m.idle.setIdleMs(2 * MINUTE);
+  await ended(m, 6950);
+  await scope(m, id, [5950, 5951]);
+  for (let minute = 0; minute < 4 && m.registry.get(id); minute++) {
+    m.timers.pass(MINUTE);
+    await m.idle.checked();
+  }
+  assert.equal(m.registry.get(id), undefined, 'asleep once the work ended');
+  assert.deepEqual(m.stopped, [[`mirador-agent-${id}`]]);
 });
 
 test('the reason leaves when the agent starts working again', async () => {

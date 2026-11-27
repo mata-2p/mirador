@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { terminalAgent } from '../attention/agent-args.ts';
 import { mcpServerCommands } from '../mcp/project-mcp.ts';
@@ -16,11 +16,16 @@ import type { TerminalRegistry } from './registry.ts';
  * - **Own process:** the agent (that first program), or a descendant of it whose chain up to the agent
  *   holds no shell (`sh`, `bash`, `dash`, `zsh`, `fish`): agents start MCP servers and helpers directly
  *   (`npx`, `node`, `uvx`, `python`, a binary). Also own: a process whose command line, or the script of
- *   the `sh -c` that runs it, is an MCP server configured for that agent (`mcp`), and all below it.
+ *   the `sh -c` that runs it, is an MCP server configured for that agent (`mcp`), and all below it. And
+ *   own: everything below a shell the agent started whose stdin and stdout are both a pipe or a socket
+ *   (`/proc/<pid>/fd/0` and `/1`), as a stdio MCP server's are (`bash start.sh`, `sh -c '…; exit'`; Claude
+ *   Code hands its servers socket pairs). A tool shell is not: Claude Code's background Bash has stdin
+ *   `/dev/null` and its output in a file (checked live with Claude Code 2.1.332).
  * - **Background work (a):** a process in the scope's `cgroup.procs` that does not descend from the pty
  *   child: orphaned when the shell that started it exited (`npm run dev &`).
  * - **Background work (b):** a descendant of the agent through a shell, alive while its turn is finished
- *   (the only time this runs): a finished turn runs no tool, so it is a background job.
+ *   (the only time this runs): a finished turn runs no tool, so it is a background job, unless the first
+ *   such shell is wired to the agent as a stdio MCP server (above).
  * - Without scopes (`scope` null) only (b) can be seen: orphans leave the tree untracked (#1).
  *
  * What it answers is the program's name only, the comm the kernel keeps (`/proc/<pid>/status` Name), and
@@ -99,6 +104,9 @@ function commandOf(argv: string[]): string[] {
   return words[0] === 'exec' ? words.slice(1) : words;
 }
 
+/** A pipe or a socket, as `/proc/<pid>/fd/<n>` names one. */
+const CONNECTED = /^(pipe|socket):\[\d+\]$/;
+
 const normal = (words: string[]) => (words.length ? [basename(words[0]), ...words.slice(1)].join('\0') : '');
 
 /** Whether `argv` (or the `sh -c` script it runs) is one of the configured MCP servers' command lines. */
@@ -135,6 +143,9 @@ async function scanFor(scan: BackgroundScan): Promise<BackgroundWork | null> {
     for (const pid of pids) if (matchesMcp(await argv(pid), mcp)) return true;
     return false;
   };
+  // A stdio MCP server's transport: its stdin and stdout both a pipe or a socket.
+  const fd = (pid: number, n: number) => readlink(join(roots.proc, String(pid), 'fd', String(n))).catch(() => '');
+  const stdioServer = async (pid: number) => CONNECTED.test(await fd(pid, 0)) && CONNECTED.test(await fd(pid, 1));
   const found: BackgroundWork[] = [];
 
   // (a) In the scope, outside the tree: orphans. The table may miss one that started after it was read.
@@ -164,8 +175,10 @@ async function scanFor(scan: BackgroundScan): Promise<BackgroundWork | null> {
     while (agent < chain.length && isShell(chain[agent])) agent++;
     if (agent >= chain.length) continue;
     const below = chain.slice(agent + 1);
-    if (!below.some(isShell)) continue;
+    const shell = below.find(isShell);
+    if (shell === undefined) continue;
     if (await anyMcp(below)) continue;
+    if (await stdioServer(shell)) continue;
     const name = nameOf(pid);
     if (name) found.push({ name, pid, kind: 'shell' });
   }

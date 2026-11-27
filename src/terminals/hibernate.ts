@@ -264,13 +264,19 @@ export class IdleSleep {
     this.log(`mirador: the open agent of workspace ${JSON.stringify(info?.workspaceId)} folder ${JSON.stringify(info?.rel)} stays awake: ${work.name} (PID ${work.pid}) is still running ${where}; idle sleep checks again in ${this.span()}`);
   }
 
-  /** Reads the reason again in BACKGROUND_WATCH_MS: it changes with the program, and leaves when nothing runs. */
+  /**
+   * Reads the reason again in BACKGROUND_WATCH_MS: it changes with the program, and leaves when nothing runs.
+   * While the clock's own check is under way (the two land in the same tick with a 1 min threshold) this read
+   * waits for the next round: starting one would drop the clock's answer, and with it the clock, so the
+   * agent would stay open once the work ended. The clock's answer shows the reason again or sleeps.
+   */
   private watch(id: string, agent: Agent): void {
     agent.cancelWatch?.();
     agent.cancelWatch = this.schedule(() => {
       agent.cancelWatch = null;
       const background = this.options.background;
       if (!agent.awake || !background) return;
+      if (agent.checking) return this.watch(id, agent);
       const token = ++agent.check;
       this.track(background(id).catch(() => null).then((work) => {
         if (agent.check !== token || this.agents.get(id) !== agent || !agent.awake) return;
