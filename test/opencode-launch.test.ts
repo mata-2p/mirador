@@ -100,3 +100,13 @@ test('a configured opencode with its own flags keeps them before --standalone, a
   assert.deepEqual(restore('opencode --model x/y', ID), { line: `opencode --model x/y '--standalone' '--session' '${ID}'`, content: CONTENT });
   assert.deepEqual(launch('opencode --model x/y', {}, false), { line: 'opencode --model x/y', content: undefined });
 });
+
+test('resumeArgs leaves an agent withoutBridge names to a fresh session, and every other agent as it was', () => {
+  const old = new Set(['opencode']);
+  assert.deepEqual(resumeArgs('opencode', ID, old), []);
+  assert.deepEqual(resumeArgs('opencode --model x/y', ID, old), []);
+  assert.deepEqual(resumeArgs('opencode', ID, new Set()), ['--session', ID]);
+  assert.deepEqual(resumeArgs('claude', 'claude-sess-1', old), ['--resume', 'claude-sess-1']);
+  assert.deepEqual(resumeArgs('gentle-shell', '/s/old.jsonl', old), ['--session', '/s/old.jsonl']);
+  assert.deepEqual(resumeArgs('agy', 'agy-conv-1', old), ['--conversation', 'agy-conv-1']);
+});

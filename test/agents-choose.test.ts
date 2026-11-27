@@ -93,9 +93,11 @@ before(async () => {
   await mkdir(join(scratch, 'bin'), { recursive: true });
   // Stand-ins: each records its own name and arguments, then idles. kimi is in the catalog but not installed.
   // The args file is written aside and renamed into place, so started() never reads half of one.
+  // opencode answers the server's `--version` (read once at start) as an opencode 2, which gets its bridge.
   for (const program of ['gentle-shell', 'claude', 'opencode', 'kimi']) {
     await writeFile(join(scratch, 'bin', program), [
       '#!/bin/sh',
+      ...(program === 'opencode' ? ['if [ "$1" = --version ]; then echo 2.4.2; exit 0; fi'] : []),
       '{ printf \'%s\\n\' "${0##*/}"; for word in "$@"; do printf \'%s\\n\' "$word"; done; } > "$HOME/args-$HERDR_PANE_ID.tmp"',
       '/bin/mv -f "$HOME/args-$HERDR_PANE_ID.tmp" "$HOME/args-$HERDR_PANE_ID"',
       'exec /bin/sleep 600',

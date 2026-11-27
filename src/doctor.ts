@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENTS, onPath } from './agents/catalog.ts';
 import { gentleAiStatePath, readInstalledAgents } from './agents/gentle-ai-state.ts';
+import { OLD_OPENCODE_LACKS, OPENCODE_BRIDGE_VERSION, readOpencodeVersion } from './agents/opencode-version.ts';
 import { configPath, loadConfig, type Mode } from './config.ts';
 import { resolveMode } from './mode.ts';
 
@@ -14,7 +15,8 @@ import { resolveMode } from './mode.ts';
  * `node src/doctor.ts` (`pnpm run doctor`; `pnpm doctor` is pnpm's own command): what Mirador needs on this machine, present or missing.
  * Node 24+, node-pty and a browser opener
  * are required and decide the exit code; systemd, gentle-ai, the catalog agents and Engram only inform,
- * and so does the browser on Linux without a display ({@link noDisplay}).
+ * and so does the browser on Linux without a display ({@link noDisplay}). An opencode on PATH older than the
+ * one Mirador's bridge needs (src/agents/opencode-version.ts) gets a `warn` line instead of `ok`.
  * A missing gentle-shell, pi or Engram also gets a line under {@link NOT_FOUND} saying what Mirador does
  * without it and how to get it; it never changes the exit code.
  * `--report` adds a fenced block for bug reports: no home path, user
@@ -210,7 +212,8 @@ export async function checkBrowser(options: Pick<DoctorOptions, 'env' | 'platfor
   return { found: browser.opener !== null, detail: browser.detail };
 }
 
-const item = (found: boolean, label: string, detail: string): string => `  ${(found ? 'ok' : 'missing').padEnd(8)} ${label}: ${detail}`;
+const item = (found: boolean | 'warn', label: string, detail: string): string =>
+  `  ${(found === 'warn' ? 'warn' : found ? 'ok' : 'missing').padEnd(8)} ${label}: ${detail}`;
 
 export async function doctor(options: DoctorOptions = {}): Promise<DoctorReport> {
   const env = options.env ?? process.env;
@@ -285,6 +288,12 @@ export async function doctor(options: DoctorOptions = {}): Promise<DoctorReport>
     if (found) agentsFound.push(`${agent.id} (${found})`);
     if (found && agent.id === 'pi') piFound = true;
     const note = found && state && !installed.includes(agent.id) ? " (not in gentle-ai's installed agents)" : '';
+    // `opencode --version`: one older than the bridge needs starts without it; one it cannot read keeps the ok line.
+    const opencode = found && agent.id === 'opencode' ? await readOpencodeVersion(env) : null;
+    if (opencode?.state === 'old') {
+      lines.push(item('warn', `agent ${agent.id}`, `${found} ${opencode.version} on PATH${note}, older than ${OPENCODE_BRIDGE_VERSION}, ${OLD_OPENCODE_LACKS}; Mirador starts it without attention or resume`));
+      continue;
+    }
     lines.push(item(found !== null, `agent ${agent.id}`, found ? `${found} on PATH${note}` : `${agent.binary} not on PATH`));
   }
 

@@ -1,4 +1,5 @@
 import { offeredAgents } from '../../agents/catalog.ts';
+import { withoutBridge } from '../../agents/opencode-version.ts';
 import { resolveMode } from '../../mode.ts';
 import type { RouteModule } from '../context.ts';
 import { sendJson } from '../respond.ts';
@@ -15,10 +16,12 @@ export function createConfigRoutes(options: { env?: NodeJS.ProcessEnv } = {}): R
         sendJson(res, 200, { agentCommand: ctx.config.agentCommand, timeZone: ctx.config.timeZone, today: ctx.today(), mode: await resolveMode(ctx.config.mode, env) }),
     },
     {
-      // The agents a folder can open, read from gentle-ai's state and PATH per request.
+      // The agents a folder can open, read from gentle-ai's state and PATH per request; an opencode older
+      // than 2.0.0 (read at start) is offered with no attention and no resume, as it starts without its bridge.
       method: 'GET',
       path: '/api/agents',
-      handler: async ({ res }) => sendJson(res, 200, { agents: await offeredAgents({ agentCommand: ctx.config.agentCommand }) }),
+      handler: async ({ res }) =>
+        sendJson(res, 200, { agents: await offeredAgents({ agentCommand: ctx.config.agentCommand, withoutBridge: withoutBridge(await ctx.opencodeVersion) }) }),
     },
   ];
 }

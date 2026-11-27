@@ -42,6 +42,14 @@ All notable changes to Mirador, written for the people who run it. The format fo
   model-call hook sends it again (Claude Code's `PreToolUse` and agy's `PostToolUse`, for every tool, and
   `PostInvocation` are now hooked too), so a cut turn reads `unknown`. Waiting and finished reports never
   expire, and opencode is unchanged. Agents started after Mirador restarts get the new hooks.
+- An opencode older than 2.0.0 (opencode 1.x) no longer closes at once when Mirador opens it (Fixes #124).
+  Mirador's opencode bridge needs `--standalone` and the V2 plugin API, which opencode has from 2.0.0 on; 1.x printed
+  its help and exited. Mirador now reads `opencode --version` when it starts and starts an older opencode without
+  the bridge, like Codex: no `--standalone` and no plugin, so no state cards, no resume (a restore or wake starts a
+  fresh session, never `--session`) and no idle sleep. The log says it once per kind of launch, naming the
+  installed and the required version, `GET /api/agents` offers it with no attention and no resume, and
+  `mirador doctor` (and so `install.sh`) prints a `warn` line for it. A version that cannot be read keeps the
+  bridge, as before, with one log line. Restart Mirador after updating opencode.
 
 ## [0.2.0] - 2026-11-26
 

@@ -1,3 +1,4 @@
+import type { OpencodeVersion } from '../agents/opencode-version.ts';
 import type { MiradorConfig } from '../config.ts';
 import type { EngramClient } from '../memory/engram.ts';
 import type { TerminalRegistry } from '../terminals/registry.ts';
@@ -25,6 +26,16 @@ export interface AppContext {
   parseDate(value: string | null): string;
   /** Runs `fn` on SIGINT/SIGTERM before the process exits (close sockets, child processes). */
   onShutdown(fn: () => void | Promise<void>): void;
+  /**
+   * `opencode --version` as the server reads it at start, beside the boot (src/agents/opencode-version.ts). An
+   * `old` one starts without its bridge and is offered with no attention or resume; absent (tests) is today's behaviour.
+   */
+  readonly opencodeVersion?: Promise<OpencodeVersion>;
+  /**
+   * Work a route module started that terminals need (opencode's bridge, once its version is known): API requests
+   * and the startup restore wait for it before they run, so no terminal starts without it. Absent in tests.
+   */
+  beforeAgents?(work: Promise<unknown>): void;
 }
 
 /** A feature's server half: it receives the shared context and returns its routes. */

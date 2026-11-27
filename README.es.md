@@ -95,6 +95,8 @@ Los agentes que Mirador conoce, desde [`src/agents/catalog.ts`](src/agents/catal
 | Gemini CLI | `gemini` | No | No, empieza de cero | No |
 | Kimi | `kimi` | No | No, empieza de cero | No |
 
+opencode informa su estado y retoma su sesión desde la 2.0.0; un opencode anterior (1.x) arranca como Codex, sin informar, sin retomar y sin dormirse, y `mirador doctor` lo avisa.
+
 Solo se duerme un agente que informa que terminó su turno, así que los que no informan nada se reabren en cada arranque y nunca se duermen. Los que sí lo informan se duermen mientras Mirador corre ([idle sleep](docs/resources.md#idle-sleep), en inglés) y tras un reinicio ([sleeping agents](docs/agents.md#sleeping-agents-lazy-restore)). El dormir por inactividad para Claude Code, opencode y Antigravity llega en la 0.3.0; en la 0.2.0 solo los agentes Pi se duermen mientras Mirador corre.
 
 ## Cómo se compara Mirador
