@@ -123,8 +123,8 @@ function stepScript(text: string, name: string): string {
   return body.map((line) => line.slice(margin)).join('\n') + '\n';
 }
 
-/** Runs the "Create the draft release" step for `tag` with a stand-in gh, and returns the arguments gh got. */
-function draftReleaseArgs(tag: string): string[] {
+/** Runs the "Create the draft release" step for `tag` with a stand-in gh, and returns the arguments gh got and the notes body. */
+function runDraftRelease(tag: string): { args: string[]; notes: string } {
   const dir = mkdtempSync(join(tmpdir(), 'mirador-release-step-'));
   try {
     mkdirSync(join(dir, 'dist'));
@@ -141,10 +141,18 @@ function draftReleaseArgs(tag: string): string[] {
       env: { PATH: `${join(dir, 'bin')}:${process.env.PATH}`, TAG: tag, GITHUB_SHA: 'f'.repeat(40), GITHUB_REPOSITORY: 'owner/mirador', GH_ARGS: join(dir, 'gh-args') },
       stdio: 'pipe',
     });
-    return readFileSync(join(dir, 'gh-args'), 'utf8').split('\n').slice(0, -1);
+    return {
+      args: readFileSync(join(dir, 'gh-args'), 'utf8').split('\n').slice(0, -1),
+      notes: readFileSync(join(dir, 'notes.md'), 'utf8'),
+    };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** The arguments gh got, for the tests that only look at the flags. */
+function draftReleaseArgs(tag: string): string[] {
+  return runDraftRelease(tag).args;
 }
 
 test('a tag with a pre-release suffix makes a draft pre-release, so a candidate never becomes the latest release', () => {
@@ -161,6 +169,19 @@ test('a tag with a pre-release suffix makes a draft pre-release, so a candidate 
 test('a plain vX.Y.Z tag makes a normal draft release, not a pre-release', () => {
   const args = draftReleaseArgs('v0.2.0');
   assert.deepEqual(args, ['release', 'create', 'v0.2.0', '--draft', '--verify-tag', '--title', 'Mirador v0.2.0', '--notes-file', 'notes.md', 'dist/mirador-*.tar.gz', 'dist/SHA256SUMS']);
+});
+
+// A published release keeps the draft's notes verbatim, so the first line reaches the people who
+// download the archive. "Review it before publishing it" is addressed to the maintainer and reads as
+// a leftover instruction once the release is public (#98).
+test('the notes open with a line addressed to the reader, not to the maintainer reviewing the draft', () => {
+  for (const tag of ['v0.2.0', 'v0.3.0-rc.1']) {
+    const first = runDraftRelease(tag).notes.split('\n')[0];
+    assert.ok(first, `${tag}: empty notes`);
+    assert.doesNotMatch(first, /review it before publishing/i, `${tag}: ${first}`);
+    assert.doesNotMatch(first, /\(docs\/releasing\.md\)/, `${tag}: ${first}`);
+    assert.match(first, /built by the release workflow/i, `${tag}: ${first}`);
+  }
 });
 
 test('any pre-release suffix check-tag.sh accepts makes a pre-release; a plain version with large numbers does not', () => {

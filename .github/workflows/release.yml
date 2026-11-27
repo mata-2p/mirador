@@ -170,7 +170,7 @@ jobs:
         run: |
           version="${TAG#v}"
           {
-            echo "Draft built by the release workflow from $TAG ($GITHUB_SHA). Review it before publishing it (docs/releasing.md)."
+            echo "Built by the release workflow from $TAG ($GITHUB_SHA)."
             echo
             echo "SHA256SUMS:"
             echo

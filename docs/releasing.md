@@ -113,12 +113,15 @@ On the draft release (**Releases**), before publishing it:
 
    On the web, a healthy draft shows its tag and its commit under the title, and its edit page says
    **Tag: v0.2.0 — Existing tag**. The broken 0.2.0 draft showed no tag.
-3. The smoke job already unpacked each archive in clean containers (the oldest glibc supported and a
+3. Read the notes as a reader of the release will: publishing keeps them verbatim. The first line names the
+   tag and commit that built the archives, and nothing in the body is addressed to you — the checks you are
+   meant to run live in this document, not in the notes.
+4. The smoke job already unpacked each archive in clean containers (the oldest glibc supported and a
    current distribution), ran its doctor and started its server. To try one by hand as well, unpack it on a
    clean Linux system with no Node, pnpm or compiler and run `node/bin/node src/doctor.ts`, then
    `bin/mirador`.
-4. The first release with archives is shown to the owner as a draft, before anyone publishes it.
-5. Publish it: **Edit › Publish release**.
+5. The first release with archives is shown to the owner as a draft, before anyone publishes it.
+6. Publish it: **Edit › Publish release**.
 
 Edit a draft's notes with `gh release edit … --notes-file`. It keeps the draft's `tag_name` (tested on a test
 draft, 2026-11-26: `tag_name` stayed the same, and the notes matched the file byte for byte, CRLF line ends
