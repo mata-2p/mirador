@@ -91,7 +91,7 @@ test('the hook sends SessionEnd\'s reason as a left-off line without text or att
 });
 
 test('the settings add PostCompact and SessionEnd, and --no-left-off when the capture is off; nothing else changes', async () => {
-  assert.deepEqual(Object.keys(claudeSettings('hook').hooks), ['UserPromptSubmit', 'PostToolUse', 'Notification', 'Stop', 'PostCompact', 'SessionEnd']);
+  assert.deepEqual(Object.keys(claudeSettings('hook').hooks), ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'PostCompact', 'SessionEnd']);
   const dir = await mkdtemp(join(tmpdir(), 'mirador-left-off-settings-'));
   try {
     const on = JSON.parse(await readFile(await prepareClaudeSettings(dir, '/app/bin/claude-hook', '/usr/bin/node'), 'utf8'));

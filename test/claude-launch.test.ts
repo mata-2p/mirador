@@ -4,16 +4,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENTS, agentLaunch } from '../src/agents/catalog.ts';
 import { bridgeArgs, resumeArgs } from '../src/attention/agent-args.ts';
+import { prepareClaudeSettings } from '../src/attention/claude-hooks.ts';
 import { TerminalRegistry, type PtyProcess, type SpawnFn, type TerminalRequest } from '../src/terminals/registry.ts';
 
 const HOOK = fileURLToPath(new URL('../bin/claude-hook', import.meta.url));
+/** A working report expires after 10 minutes without a hook (#3); finished and waiting never do. */
+const WORKING_TTL_MS = 600_000;
 const SETTINGS = '/run/mirador/herdr/claude-settings.json';
 const BRIDGES = { pi: '/app/bridge.ts', 'claude-code': SETTINGS };
 const ID = '0f8e2a4c-1b7d-4e5f-9a6b-3c2d1e0f9a8b';
@@ -97,19 +100,37 @@ test('bin/claude-hook reports each event as one mirador:attention line with the 
   // One attention line; the prompt itself follows it as a left-off line (test/left-off-view.test.ts).
   assert.deepEqual(working.lines.map((sent) => sent.cmd), ['report-metadata', 'left-off']);
   const [line] = working.lines;
-  assert.deepEqual({ ...line, seq: 0 }, { v: 1, cmd: 'report-metadata', pane: 'pane-1', source: 'mirador:attention', seq: 0, ttlMs: null, tokens: { session: ID }, clear: ['blocked', 'prompt', 'finished'] });
+  assert.deepEqual({ ...line, seq: 0 }, { v: 1, cmd: 'report-metadata', pane: 'pane-1', source: 'mirador:attention', seq: 0, ttlMs: WORKING_TTL_MS, tokens: { session: ID }, clear: ['blocked', 'prompt', 'finished'] });
   assert.ok(Math.abs((line.seq as number) - Date.now()) < 10_000, 'seq is the clock');
 
   const waiting = (await hook(payload('Notification', { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' }))).lines[0];
-  assert.deepEqual([waiting.tokens, waiting.clear], [{ session: ID, prompt: 'Claude needs your permission to use Bash' }, ['blocked', 'finished']]);
+  assert.deepEqual([waiting.tokens, waiting.clear, waiting.ttlMs], [{ session: ID, prompt: 'Claude needs your permission to use Bash' }, ['blocked', 'finished'], null]);
 
   const finished = (await hook(payload('Stop', { stop_hook_active: false }))).lines[0];
   assert.deepEqual(Object.keys(finished.tokens as object).sort(), ['finished', 'session']);
   assert.match((finished.tokens as { finished: string }).finished, /^\d+$/);
-  assert.deepEqual(finished.clear, ['blocked', 'prompt']);
+  assert.deepEqual([finished.clear, finished.ttlMs], [['blocked', 'prompt'], null]);
 
-  const activity = (await hook(payload('PostToolUse', { tool_name: 'Bash' }))).lines[0];
-  assert.deepEqual([activity.tokens, activity.clear], [{ session: ID }, ['blocked', 'prompt', 'finished']]);
+  // Every tool event refreshes the working report, before and after the tool runs.
+  for (const event of ['PreToolUse', 'PostToolUse']) {
+    const result = await hook(payload(event, { tool_name: 'Bash', tool_input: { command: 'npm test' } }));
+    assert.deepEqual([result.code, result.out, result.lines.length], [0, '', 1], event);
+    const [activity] = result.lines;
+    assert.deepEqual([activity.cmd, activity.tokens, activity.clear, activity.ttlMs], ['report-metadata', { session: ID }, ['blocked', 'prompt', 'finished'], WORKING_TTL_MS], event);
+  }
+});
+
+test('prepareClaudeSettings registers PreToolUse beside the events it ran before', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'mirador-claude-settings-'));
+  try {
+    const settings = JSON.parse(await readFile(await prepareClaudeSettings(dir, '/app/bin/claude-hook', '/opt/node/bin/node'), 'utf8'));
+    assert.deepEqual(Object.keys(settings.hooks), ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'PostCompact', 'SessionEnd']);
+    for (const event of Object.keys(settings.hooks)) {
+      assert.deepEqual(settings.hooks[event], [{ hooks: [{ type: 'command', command: "'/opt/node/bin/node' '/app/bin/claude-hook'", timeout: 5 }] }], event);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('bin/claude-hook sends nothing for an idle reminder, an unknown event or bad input, and never fails', async () => {

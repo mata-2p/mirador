@@ -22,6 +22,8 @@ const CONTENT = '{"plugins":["/run/mirador/herdr/opencode-plugin"]}';
 const FOLDER = '/run/mirador/herdr/agy-workspace';
 const BRIDGES = { pi: '/app/bridge.ts', 'claude-code': SETTINGS, opencode: CONTENT, antigravity: FOLDER };
 const ID = 'ec33ebf9-0cba-4100-8142-c61503f6c587';
+/** A working report expires after 10 minutes without a hook (#3); finished and waiting never do. */
+const WORKING_TTL_MS = 600_000;
 
 const pty: PtyProcess = { onData() {}, onExit() {}, write() {}, resize() {}, kill() {} };
 /** The command line and the OPENCODE_CONFIG_CONTENT of a terminal, with the bridges as inbox.ts adds them. */
@@ -105,7 +107,10 @@ test('prepareAgyHooks writes only <dir>/agy-workspace/.agents/hooks.json (0700/0
     assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), {
       'mirador-attention': {
         PreInvocation: [run('PreInvocation')],
+        // PreToolUse answers {"decision":"allow"}: only the tools that wait for an answer, never every tool.
         PreToolUse: [{ matcher: 'ask_question|ask_permission', hooks: [run('PreToolUse')] }],
+        PostToolUse: [{ matcher: '', hooks: [run('PostToolUse')] }],
+        PostInvocation: [run('PostInvocation')],
         Stop: [run('Stop')],
       },
     });
@@ -163,12 +168,12 @@ test('bin/agy-hook maps PreInvocation, a question or permission tool and Stop to
   assert.deepEqual([working.code, working.out, working.err], [0, NONE, '']);
   assert.equal(working.lines.length, 1);
   const [first] = working.lines;
-  assert.deepEqual({ ...first, seq: 0 }, { v: 1, cmd: 'report-metadata', pane: 'pane-1', source: 'mirador:attention', seq: 0, ttlMs: null, tokens: { session: ID }, clear: ['blocked', 'prompt', 'finished'] });
+  assert.deepEqual({ ...first, seq: 0 }, { v: 1, cmd: 'report-metadata', pane: 'pane-1', source: 'mirador:attention', seq: 0, ttlMs: WORKING_TTL_MS, tokens: { session: ID }, clear: ['blocked', 'prompt', 'finished'] });
   assert.ok(Math.abs((first.seq as number) - Date.now()) < 10_000, 'seq is the clock');
 
   const question = await hook('PreToolUse', payload({ stepIdx: 4, toolCall: { name: 'ask_question', args: { questions: [{ question: 'Which  database\nshould I use?', options: ['sqlite', 'postgres'], is_multi_select: false }] } } }));
   assert.deepEqual([question.code, question.out, question.err], [0, ALLOW, ''], 'PreToolUse defers to the next hook or the default policy');
-  assert.deepEqual([question.lines[0].tokens, question.lines[0].clear], [{ session: ID, prompt: 'Which database should I use?' }, ['blocked', 'finished']]);
+  assert.deepEqual([question.lines[0].tokens, question.lines[0].clear, question.lines[0].ttlMs], [{ session: ID, prompt: 'Which database should I use?' }, ['blocked', 'finished'], null]);
 
   const permission = await hook('PreToolUse', payload({ stepIdx: 5, toolCall: { name: 'ask_permission', args: { Action: 'write', Target: '/etc/hosts', Reason: 'Add the staging host' } } }));
   assert.deepEqual([permission.out, permission.lines[0].tokens], [ALLOW, { session: ID, prompt: 'Add the staging host' }]);
@@ -179,16 +184,24 @@ test('bin/agy-hook maps PreInvocation, a question or permission tool and Stop to
   assert.deepEqual([finished.code, finished.out, finished.err], [0, STOP, '']);
   assert.deepEqual(Object.keys(finished.lines[0].tokens as object).sort(), ['finished', 'session']);
   assert.match((finished.lines[0].tokens as { finished: string }).finished, /^\d+$/);
-  assert.deepEqual(finished.lines[0].clear, ['blocked', 'prompt']);
+  assert.deepEqual([finished.lines[0].clear, finished.lines[0].ttlMs], [['blocked', 'prompt'], null]);
 });
 
-test('bin/agy-hook sends nothing for other tools, unknown events or bad input, always answers JSON and exits 0', async () => {
-  const other = await hook('PreToolUse', payload({ toolCall: { name: 'run_command', args: { CommandLine: 'npm test' } } }));
-  assert.deepEqual([other.code, other.out, other.err, other.lines], [0, ALLOW, '', []]);
+test('bin/agy-hook refreshes the working report on every other tool and model-call event', async () => {
+  const tool = { toolCall: { name: 'run_command', args: { CommandLine: 'npm test' } } };
+  for (const [event, fields, answer] of [['PreToolUse', tool, ALLOW], ['PostToolUse', tool, NONE], ['PostToolUse', { toolCall: { name: 'ask_question', args: {} } }, NONE], ['PostInvocation', { invocationNum: 0 }, NONE]] as const) {
+    const result = await hook(event, payload(fields));
+    assert.deepEqual([result.code, result.out, result.err, result.lines.length], [0, answer, '', 1], event);
+    const [line] = result.lines;
+    assert.deepEqual([line.cmd, line.source, line.ttlMs, line.tokens, line.clear], ['report-metadata', 'mirador:attention', WORKING_TTL_MS, { session: ID }, ['blocked', 'prompt', 'finished']], event);
+  }
+});
+
+test('bin/agy-hook sends nothing for unknown events or bad input, always answers JSON and exits 0', async () => {
   // SessionStart is not hooked: a stray call still reports nothing, so an agent that has not started a turn never reads as working.
-  for (const [event, input] of [['SessionStart', payload()], ['PostInvocation', payload()], ['PostToolUse', payload()], ['', payload()], ['Stop', 'not json'], ['Stop', '[]'], ['Stop', '']]) {
+  for (const [event, input] of [['SessionStart', payload()], ['', payload()], ['PreToolUse', 'not json'], ['PostToolUse', '[]'], ['Stop', 'not json'], ['Stop', '[]'], ['Stop', '']]) {
     const result = await hook(event, input);
-    assert.deepEqual([result.code, result.out, result.err, result.lines], [0, event === 'Stop' ? STOP : NONE, '', []], `${event} ${input}`);
+    assert.deepEqual([result.code, result.out, result.err, result.lines], [0, event === 'Stop' ? STOP : event === 'PreToolUse' ? ALLOW : NONE, '', []], `${event} ${input}`);
   }
   // A conversation id that could be read as an option is left out; the state still goes.
   const odd = (await hook('Stop', payload({ conversationId: '--help', fullyIdle: true }))).lines[0];

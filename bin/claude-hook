@@ -4,9 +4,12 @@
 // hooks run this script with the event's JSON on stdin. It reports the agent's attention state as the
 // gentle-shell bridge does, as one herdr report-metadata line to $HERDR_SOCKET_PATH for pane
 // $HERDR_PANE_ID, from source mirador:attention:
-//   UserPromptSubmit, PostToolUse  working   clears blocked, prompt and finished
+//   UserPromptSubmit, PreToolUse,  working   clears blocked, prompt and finished; expires after WORKING_TTL_MS
+//   PostToolUse
 //   Notification                   waiting   prompt=<its message>; idle reminders and other notices change nothing
 //   Stop                           finished  finished=<turn id>
+// Waiting and finished never expire. Stop does not run when the user interrupts a turn, so each tool event
+// re-sends working with the TTL: a cut turn reads `unknown` once no hook came for WORKING_TTL_MS.
 // Each report also carries session=<session_id>, which Mirador records to resume with `--resume <id>`.
 // For "where it left off" (src/memory/left-off.ts) it also sends, after that report and on the same
 // connection, one `left-off` line with a documented hook field, cut to 16 KiB:
@@ -41,6 +44,8 @@ const SESSION_ID = /^[A-Za-z0-9][\w-]{0,127}$/;
 /** Notifications that wait for an answer (https://code.claude.com/docs/en/hooks#notification). */
 const WAITING = new Set(['permission_prompt', 'elicitation_dialog', 'elicitation_url_dialog', 'agent_needs_input']);
 const DEFAULT_PROMPT = 'Claude Code needs your input';
+/** How long a working report stands without another hook (10 minutes); as WORKING_TTL_MS in bin/agy-hook. */
+const WORKING_TTL_MS = 10 * 60 * 1000;
 
 /** The hook's event object, or null when `input` is not one. */
 function eventOf(input) {
@@ -77,22 +82,23 @@ function leftOffOf(event, pane) {
   return Buffer.byteLength(line) <= MAX_LEFT_OFF_LINE_BYTES ? line : null;
 }
 
-/** The tokens and cleared tokens `event` reports, or null when it reports nothing. */
+/** The expiry, tokens and cleared tokens `event` reports, or null when it reports nothing. */
 function reportOf(event, seq) {
   if (!event) return null;
   const session = typeof event.session_id === 'string' && SESSION_ID.test(event.session_id) ? { session: event.session_id } : {};
   switch (event.hook_event_name) {
     case 'UserPromptSubmit':
+    case 'PreToolUse':
     case 'PostToolUse':
-      return { tokens: session, clear: ['blocked', 'prompt', 'finished'] };
+      return { ttlMs: WORKING_TTL_MS, tokens: session, clear: ['blocked', 'prompt', 'finished'] };
     case 'Notification': {
       // Older versions send no type: count it as waiting.
       if (event.notification_type !== undefined && !WAITING.has(event.notification_type)) return null;
       const message = typeof event.message === 'string' ? event.message.replace(/\s+/g, ' ').trim().slice(0, MAX_MESSAGE) : '';
-      return { tokens: { ...session, prompt: message || DEFAULT_PROMPT }, clear: ['blocked', 'finished'] };
+      return { ttlMs: null, tokens: { ...session, prompt: message || DEFAULT_PROMPT }, clear: ['blocked', 'finished'] };
     }
     case 'Stop':
-      return { tokens: { ...session, finished: String(seq) }, clear: ['blocked', 'prompt'] };
+      return { ttlMs: null, tokens: { ...session, finished: String(seq) }, clear: ['blocked', 'prompt'] };
     default:
       return null;
   }
@@ -128,7 +134,7 @@ function main() {
     const report = reportOf(event, seq);
     const lines = [];
     if (report) {
-      const line = JSON.stringify({ v: 1, cmd: 'report-metadata', pane, source: SOURCE, seq, ttlMs: null, ...report }) + '\n';
+      const line = JSON.stringify({ v: 1, cmd: 'report-metadata', pane, source: SOURCE, seq, ...report }) + '\n';
       if (Buffer.byteLength(line) <= MAX_LINE_BYTES) lines.push(line);
     }
     const kept = leftOff && event ? leftOffOf(event, pane) : null;

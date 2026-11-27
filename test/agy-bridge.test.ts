@@ -212,7 +212,7 @@ test('choosing antigravity starts agy --add-dir <hook folder> from the runtime f
   assert.equal((await stat(file)).mode & 0o777, 0o600);
   for (const dir of [folder(), join(folder(), '.agents')]) assert.equal((await stat(dir)).mode & 0o777, 0o700, dir);
   const hooks = JSON.parse(await readFile(file, 'utf8'))['mirador-attention'];
-  assert.deepEqual(Object.keys(hooks), ['PreInvocation', 'PreToolUse', 'Stop']);
+  assert.deepEqual(Object.keys(hooks), ['PreInvocation', 'PreToolUse', 'PostToolUse', 'PostInvocation', 'Stop']);
   assert.match(hooks.Stop[0].command, /bin\/agy-hook'? Stop$/);
   // The pi agent beside it is untouched: the configured gentle-shell with its own bridge.
   const pi = await open('pi');
@@ -234,8 +234,14 @@ test('the hooks drive the inbox: PreInvocation working, a question waiting, Stop
   assert.deepEqual([working.session, working.sessionFile], [S1, null], 'the payload conversationId is the record resume key');
   assert.deepEqual(await inbox(), []);
 
-  // Any other tool never reaches Mirador's hook: the matcher keeps it out.
-  assert.deepEqual(await fire(alpha.id, 'PreToolUse', { stepIdx: 3, toolCall: { name: 'run_command', args: { CommandLine: 'npm test' } } }), []);
+  // Any other tool never reaches Mirador's PreToolUse hook (the matcher keeps it out, so agy's own policy decides);
+  // its PostToolUse does, and refreshes the working report.
+  const tool = { stepIdx: 3, toolCall: { name: 'run_command', args: { CommandLine: 'npm test' } } };
+  assert.deepEqual(await fire(alpha.id, 'PreToolUse', tool), []);
+  assert.deepEqual(await fire(alpha.id, 'PostToolUse', tool), [{ status: 0, out: {} }]);
+  assert.deepEqual(await fire(alpha.id, 'PostInvocation', { invocationNum: 0 }), [{ status: 0, out: {} }]);
+  assert.equal((await recordOf(alpha.id)).lastState, 'working');
+  assert.deepEqual(await inbox(), []);
   const asked = await fire(alpha.id, 'PreToolUse', { stepIdx: 4, toolCall: { name: 'ask_question', args: { questions: [{ question: 'Which database?', options: ['sqlite', 'postgres'], is_multi_select: false }] } } });
   assert.deepEqual(asked, [{ status: 0, out: { decision: 'allow' } }], 'the hook defers to agy’s own policy');
   const waiting = await waitFor(async () => ((await inbox()).length ? inbox() : undefined));
