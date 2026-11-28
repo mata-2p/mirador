@@ -1,14 +1,16 @@
 // Which opencode Mirador's bridge works with (#124): opencode 2.0.0 is the first with `--standalone` and the V2
 // plugin API (setup(ctx), session.execution.*, permission.*, form.*); opencode 1.x has neither
-// (opencode's v2.0.0 tag). `opencode --version` is read once, without a shell and
-// within a bounded time, and `mirador doctor` warns about an older one. Fake `opencode` scripts on a scratch
-// PATH stand in for the real one; no real agent binary ever runs.
+// (opencode's v2.0.0 tag). `opencode --version` is read once, without a shell and within a bounded time, from the
+// opencode an agent terminal runs: the configured `agentCommand`'s when it names opencode by path, else the
+// `opencode` on the PATH the agent bash gets (its startup files may extend PATH). `mirador doctor` names that
+// opencode and warns about an older one. Fake `opencode` scripts on a scratch PATH stand in for the real one; no
+// real agent binary ever runs.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { OPENCODE_BRIDGE_VERSION, readOpencodeVersion } from '../src/agents/opencode-version.ts';
+import { OPENCODE_BRIDGE_VERSION, OPENCODE_VERSION_TIMEOUT_MS, oldOpencodeText, readOpencodeVersion } from '../src/agents/opencode-version.ts';
 import { doctor } from '../src/doctor.ts';
 
 const scratch = await mkdtemp(join(tmpdir(), 'mirador-opencode-version-'));
@@ -24,21 +26,100 @@ async function withOpencode(body: string): Promise<string> {
   return dir;
 }
 
-test('opencode 2.0.0 is the version the bridge needs', () => {
+/** What readOpencodeVersion says for an `opencode` printing `body` on a PATH of its own. */
+async function versionOf(body: string) {
+  const dir = await withOpencode(body);
+  return { dir, file: join(dir, 'opencode'), read: await readOpencodeVersion({ PATH: dir }) };
+}
+
+/** A scratch HOME whose ~/.bashrc runs `bashrc`. */
+async function home(bashrc: string): Promise<string> {
+  const dir = join(scratch, `home-${++dirs}`);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, '.bashrc'), `${bashrc}\n`);
+  return dir;
+}
+
+const waitForFile = async (file: string, ms: number): Promise<string> => {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const text = await readFile(file, 'utf8').catch(() => '');
+    if (text.endsWith('\n')) return text;
+    if (Date.now() > deadline) throw new Error(`${file} did not appear within ${ms} ms`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+};
+
+test('opencode 2.0.0 is the version the bridge needs, and a slow opencode wrapper gets 15 s to answer', () => {
   assert.equal(OPENCODE_BRIDGE_VERSION, '2.0.0');
+  assert.equal(OPENCODE_VERSION_TIMEOUT_MS, 15_000);
 });
 
-test('readOpencodeVersion reads `opencode --version`: absent, older than 2.0.0, 2.0.0 or newer, or unreadable', async () => {
+test('readOpencodeVersion reads `opencode --version`: absent, older than 2.0.0, 2.0.0 or newer, or unreadable, naming the file it ran', async () => {
   assert.deepEqual(await readOpencodeVersion({ PATH: join(scratch, 'nowhere') }), { state: 'absent' });
-  assert.deepEqual(await readOpencodeVersion({ PATH: await withOpencode('echo 1.19.6') }), { state: 'old', version: '1.19.6' });
-  assert.deepEqual(await readOpencodeVersion({ PATH: await withOpencode('echo 1.99.99') }), { state: 'old', version: '1.99.99' });
-  assert.deepEqual(await readOpencodeVersion({ PATH: await withOpencode('echo 2.0.0') }), { state: 'ok', version: '2.0.0' });
-  assert.deepEqual(await readOpencodeVersion({ PATH: await withOpencode('echo opencode v2.4.2') }), { state: 'ok', version: '2.4.2' });
-  assert.deepEqual(await readOpencodeVersion({ PATH: await withOpencode('echo 10.0.1') }), { state: 'ok', version: '10.0.1' });
-  assert.deepEqual(await readOpencodeVersion({ PATH: await withOpencode('exit 99') }), { state: 'unreadable', reason: 'opencode --version exited with code 99' });
-  assert.deepEqual(await readOpencodeVersion({ PATH: await withOpencode('echo hello') }), { state: 'unreadable', reason: 'opencode --version printed no version' });
-  // Only stdout counts: a wrapper's note on stderr is no version.
-  assert.deepEqual(await readOpencodeVersion({ PATH: await withOpencode('echo 1.19.6 >&2') }), { state: 'unreadable', reason: 'opencode --version printed no version' });
+  for (const [body, expected] of [
+    ['echo 1.19.6', { state: 'old', version: '1.19.6' }],
+    ['echo 1.99.99', { state: 'old', version: '1.99.99' }],
+    ['echo 2.0.0', { state: 'ok', version: '2.0.0' }],
+    ['echo opencode v2.4.2', { state: 'ok', version: '2.4.2' }],
+    ['echo 10.0.1', { state: 'ok', version: '10.0.1' }],
+    ['exit 99', { state: 'unreadable', reason: 'opencode --version exited with code 99' }],
+    ['echo hello', { state: 'unreadable', reason: 'opencode --version printed no version' }],
+    // Only stdout counts: a wrapper's note on stderr is no version.
+    ['echo 1.19.6 >&2', { state: 'unreadable', reason: 'opencode --version printed no version' }],
+  ] as const) {
+    const { file, read } = await versionOf(body);
+    assert.deepEqual(read, { ...expected, file }, body);
+  }
+});
+
+test('a pre-release is compared by its x.y.z, and a 0.0.0-… development build counts as unreadable (the bridge stays)', async () => {
+  for (const [body, expected] of [
+    ['echo 2.0.0-beta.1', { state: 'ok', version: '2.0.0-beta.1' }],
+    ['echo 2.3.1-rc.2', { state: 'ok', version: '2.3.1-rc.2' }],
+    ['echo 1.19.6-next.4', { state: 'old', version: '1.19.6-next.4' }],
+    ['echo 0.0.0-dev-202611271200', { state: 'unreadable', reason: 'opencode --version printed a development build (0.0.0-dev-202611271200), not a release' }],
+    ['echo 0.0.0-main-1a2b3c', { state: 'unreadable', reason: 'opencode --version printed a development build (0.0.0-main-1a2b3c), not a release' }],
+  ] as const) {
+    const { file, read } = await versionOf(body);
+    assert.deepEqual(read, { ...expected, file }, body);
+  }
+});
+
+test('a configured agentCommand naming opencode by path is the opencode read, not the one on PATH', async () => {
+  const onPath = await withOpencode('echo 2.1.0');
+  const configured = await withOpencode('echo 1.19.6');
+  const env = { PATH: onPath, HOME: await home('') };
+  assert.deepEqual(await readOpencodeVersion(env, { agentCommand: `${configured}/opencode --model x` }), { state: 'old', version: '1.19.6', file: join(configured, 'opencode') });
+  // `~/` is the agent bash's tilde: HOME.
+  const tilde = join(env.HOME, 'tools');
+  await mkdir(tilde, { recursive: true });
+  await writeFile(join(tilde, 'opencode'), '#!/bin/sh\necho 1.2.3\n', { mode: 0o755 });
+  assert.deepEqual(await readOpencodeVersion(env, { agentCommand: '~/tools/opencode' }), { state: 'old', version: '1.2.3', file: join(tilde, 'opencode') });
+  // A relative path resolves in each folder an agent opens: no one version to read, so the bridge stays.
+  assert.deepEqual(await readOpencodeVersion(env, { agentCommand: 'bin/opencode' }), {
+    state: 'unreadable',
+    file: 'bin/opencode',
+    reason: 'agentCommand names opencode by a relative path, which each folder resolves on its own',
+  });
+  // A plain `opencode`, or another agent configured (opencode chosen from the catalog), is looked up on PATH.
+  for (const agentCommand of ['opencode', 'gentle-shell']) {
+    assert.deepEqual(await readOpencodeVersion(env, { agentCommand }), { state: 'ok', version: '2.1.0', file: join(onPath, 'opencode') }, agentCommand);
+  }
+});
+
+test('with the agent shell, opencode is looked up on the PATH its ~/.bashrc leaves, and --version runs with that PATH', async () => {
+  const server = await withOpencode('echo 1.19.6');
+  const agent = await withOpencode('echo "$PATH" > "$HOME/version-path"; echo 2.2.0');
+  const env = { PATH: server, HOME: await home(`echo noise from bashrc; PATH="${agent}:$PATH"`) };
+  assert.deepEqual(await readOpencodeVersion(env, { shell: '/bin/bash' }), { state: 'ok', version: '2.2.0', file: join(agent, 'opencode') });
+  assert.equal(await readFile(join(env.HOME, 'version-path'), 'utf8'), `${agent}:${server}\n`);
+  // A shell that cannot run, or a ~/.bashrc that ends it before it prints, leaves the server's PATH.
+  assert.deepEqual(await readOpencodeVersion(env, { shell: join(scratch, 'no-such-shell') }), { state: 'old', version: '1.19.6', file: join(server, 'opencode') });
+  const exits = { PATH: server, HOME: await home(`PATH="${agent}:$PATH"; exit 7`) };
+  assert.deepEqual(await readOpencodeVersion(exits, { shell: '/bin/bash' }), { state: 'old', version: '1.19.6', file: join(server, 'opencode') });
+  // Without HOME the shell would read the account's own ~/.bashrc: the server's PATH instead.
+  assert.deepEqual(await readOpencodeVersion({ PATH: server }, { shell: '/bin/bash' }), { state: 'old', version: '1.19.6', file: join(server, 'opencode') });
 });
 
 test('readOpencodeVersion runs the program itself with --version, no shell, and gives up on one that hangs, ending it and its children', async () => {
@@ -46,31 +127,48 @@ test('readOpencodeVersion runs the program itself with --version, no shell, and 
   await mkdir(marks, { recursive: true });
   // Started directly, it gets exactly one argument, `--version`.
   const args = await withOpencode(`printf '%s\\n' "$@" > ${marks}/argv; echo 2.1.0`);
-  assert.deepEqual(await readOpencodeVersion({ PATH: args }), { state: 'ok', version: '2.1.0' });
+  assert.deepEqual(await readOpencodeVersion({ PATH: args }), { state: 'ok', version: '2.1.0', file: join(args, 'opencode') });
   assert.equal(await readFile(join(marks, 'argv'), 'utf8'), '--version\n');
 
-  const hang = await withOpencode(`/bin/sleep 30 & echo $! > ${marks}/child; wait`);
+  // The child writes its pid first thing; the test waits for that file while the read is still pending (the
+  // limit is far longer than that takes), so the kill always finds a child to end.
+  const hang = await withOpencode(`/bin/sleep 30 & echo $! > ${marks}/child.tmp; /bin/mv ${marks}/child.tmp ${marks}/child; wait`);
   const began = Date.now();
-  assert.deepEqual(await readOpencodeVersion({ PATH: hang }, { timeoutMs: 300 }), { state: 'unreadable', reason: 'opencode --version did not answer within 300 ms' });
-  assert.ok(Date.now() - began < 3000, `gave up in ${Date.now() - began} ms`);
-  const child = Number((await readFile(join(marks, 'child'), 'utf8')).trim());
+  const reading = readOpencodeVersion({ PATH: hang }, { timeoutMs: 1500 });
+  const child = Number((await waitForFile(join(marks, 'child'), 1500)).trim());
+  assert.deepEqual(await reading, { state: 'unreadable', reason: 'opencode --version did not answer within 1500 ms', file: join(hang, 'opencode') });
+  assert.ok(Date.now() - began < 5000, `gave up in ${Date.now() - began} ms`);
   const alive = () => { try { process.kill(child, 0); return true; } catch { return false; } };
   for (let i = 0; i < 40 && alive(); i++) await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(alive(), false, 'its child was ended too');
 });
 
 const agentLine = (lines: string[]) => lines.find((line) => / agent opencode: /.test(line));
+const doctorEnv = async (path: string, bashrc = '') => ({ PATH: path, HOME: await home(bashrc), GENTLE_AI_HOME: join(scratch, 'gentle-ai'), XDG_CONFIG_HOME: join(scratch, 'cfg') });
+const runDoctor = (env: NodeJS.ProcessEnv) => doctor({ env, loadPty: async () => ({}), probeEngram: async () => false, platform: 'linux', kernelRelease: '6.12.0' });
 
-test('mirador doctor warns about an opencode older than 2.0.0, naming both versions and what Mirador does with it', async () => {
-  const env = { PATH: await withOpencode('echo 1.19.6'), HOME: join(scratch, 'home'), GENTLE_AI_HOME: join(scratch, 'gentle-ai'), XDG_CONFIG_HOME: join(scratch, 'cfg') };
-  const report = await doctor({ env, loadPty: async () => ({}), probeEngram: async () => false, platform: 'linux', kernelRelease: '6.12.0' });
-  assert.equal(agentLine(report.lines), "  warn     agent opencode: opencode 1.19.6 on PATH, older than 2.0.0, the first with --standalone and the plugin API Mirador's bridge needs; Mirador starts it without attention or resume");
+test('mirador doctor warns about an opencode older than 2.0.0, naming the file, both versions and what Mirador does with it', async () => {
+  const dir = await withOpencode('echo 1.19.6');
+  const report = await runDoctor(await doctorEnv(dir));
+  const file = join(dir, 'opencode');
+  assert.equal(agentLine(report.lines), `  warn     agent opencode: opencode on PATH; opencode 1.19.6 (${file}) is older than 2.0.0, the first opencode with --standalone and the plugin API Mirador's bridge needs; Mirador starts it without attention or resume`);
+  // The same words as the server's log line (OpencodeNotices).
+  assert.ok(agentLine(report.lines)!.includes(oldOpencodeText({ version: '1.19.6', file })));
 });
 
-test('mirador doctor keeps its ok line for opencode 2.0.0 or newer, and for a version it cannot read', async () => {
-  for (const body of ['echo 2.0.0', 'echo opencode v2.4.2', 'exit 99']) {
-    const env = { PATH: await withOpencode(body), HOME: join(scratch, 'home'), GENTLE_AI_HOME: join(scratch, 'gentle-ai'), XDG_CONFIG_HOME: join(scratch, 'cfg') };
-    const report = await doctor({ env, loadPty: async () => ({}), probeEngram: async () => false, platform: 'linux', kernelRelease: '6.12.0' });
-    assert.equal(agentLine(report.lines), '  ok       agent opencode: opencode on PATH', body);
+test('mirador doctor names the opencode agent terminals run: its version when 2.0.0 or newer, or why it could not be read', async () => {
+  for (const [body, detail] of [
+    ['echo 2.0.0', (file: string) => `opencode 2.0.0 (${file}), with Mirador's bridge`],
+    ['echo opencode v2.4.2', (file: string) => `opencode 2.4.2 (${file}), with Mirador's bridge`],
+    ['exit 99', (file: string) => `could not read the version of ${file} (opencode --version exited with code 99); Mirador starts it with its bridge, which needs opencode 2.0.0 or newer`],
+  ] as const) {
+    const dir = await withOpencode(body);
+    const report = await runDoctor(await doctorEnv(dir));
+    assert.equal(agentLine(report.lines), `  ok       agent opencode: opencode on PATH; ${detail(join(dir, 'opencode'))}`, body);
   }
+  // The agent bash's PATH wins: its ~/.bashrc puts a newer opencode first.
+  const server = await withOpencode('echo 1.19.6');
+  const agent = await withOpencode('echo 2.5.0');
+  const report = await runDoctor(await doctorEnv(server, `PATH="${agent}:$PATH"`));
+  assert.equal(agentLine(report.lines), `  ok       agent opencode: opencode on PATH; opencode 2.5.0 (${join(agent, 'opencode')}), with Mirador's bridge`);
 });

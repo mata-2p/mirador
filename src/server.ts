@@ -181,9 +181,12 @@ async function main(): Promise<void> {
   // `/` and /bundle/* come from memory (src/http/bundle.ts); the first build starts now, beside the boot.
   const bundle = createWebBundle({ publicDir: PUBLIC_DIR, appDir: APP_DIR, vendor: VENDOR, log: (message) => console.error(message) });
   void bundle.refresh();
-  // `opencode --version`, read once per server start, beside the boot: the server listens without waiting for it.
-  const readingOpencode = readOpencodeVersion(process.env);
   const config = await loadConfig();
+  // `opencode --version` of the opencode agent terminals run (the configured path, else the `opencode` on the PATH
+  // the agent bash gets from its startup files), read once per server start, beside the boot: the server listens
+  // without waiting for it. Stopping the server ends a read still running (`stopReadingOpencode`, at shutdown).
+  const stopReadingOpencode = new AbortController();
+  const readingOpencode = readOpencodeVersion(process.env, { agentCommand: config.agentCommand, shell: config.shell, signal: stopReadingOpencode.signal });
   // The launch secret never leaves the 0600 state file; it only mints one-time launch nonces.
   const launchSecret = createToken();
   // Short TTL (LAUNCH_NONCE_TTL_MS): the nonce passes through the browser's argv until the window redeems it.
@@ -251,18 +254,16 @@ async function main(): Promise<void> {
   // An opencode older than 2.0.0 starts without its bridge (src/http/routes/inbox.ts) and resumes nothing (the
   // restore below), with one log line per launch kind. The API and the restore wait for its version, and for the
   // bridge it decides (`beforeAgents`), before they start any terminal.
-  let opencodeNotices: OpencodeNotices | null = null;
-  let bridgeless: ReadonlySet<string> = new Set();
-  const opencodeVersion = readingOpencode
-    .catch((error: unknown): OpencodeVersion => ({ state: 'unreadable', reason: String(error) }))
-    .then((version) => {
-      opencodeNotices = new OpencodeNotices(version);
-      bridgeless = withoutBridge(version);
-      return version;
-    });
-  const beforeAgents: Promise<unknown>[] = [opencodeVersion];
+  // Everything that reads the version reads it from this settled promise.
+  const opencode = readingOpencode
+    .catch((error: unknown): OpencodeVersion => ({ state: 'unreadable', reason: String(error), file: 'opencode' }))
+    // A read the shutdown ended says nothing in the log.
+    .then((version) => ({ version, notices: new OpencodeNotices(version, stopReadingOpencode.signal.aborted ? () => undefined : undefined), bridgeless: withoutBridge(version) }));
+  const beforeAgents: Promise<unknown>[] = [opencode];
   terminals.subscribe((event) => {
-    if (event.type === 'created' && event.info.kind === 'agent' && terminalAgent(event.info.agent, config.agentCommand)?.id === 'opencode') opencodeNotices?.started();
+    if (event.type === 'created' && event.info.kind === 'agent' && terminalAgent(event.info.agent, config.agentCommand)?.id === 'opencode') {
+      void opencode.then(({ notices }) => notices.started());
+    }
   });
   const openAgents = await OpenAgents.load(openAgentsPath(), { owner: configPath(), agentCommand: config.agentCommand });
   openAgents.track(terminals);
@@ -334,10 +335,11 @@ async function main(): Promise<void> {
     today: () => formatDay(new Date(), ctx.config.timeZone),
     parseDate: (value) => parseDay(value, ctx.config.timeZone),
     onShutdown: (fn) => shutdownHooks.push(fn),
-    opencodeVersion,
+    opencodeVersion: opencode.then(({ version }) => version),
     beforeAgents: (work) => void beforeAgents.push(work),
   };
   ctx.onShutdown(() => bundle.dispose());
+  ctx.onShutdown(() => stopReadingOpencode.abort());
   ctx.onShutdown(async () => {
     await budget.flush();
     await telemetry.flush();
@@ -346,8 +348,8 @@ async function main(): Promise<void> {
   for (const module of ROUTE_MODULES) for (const route of await module(ctx)) router.add(route);
   // What the route modules started that terminals need (opencode's version and bridge): until it is done, the
   // requests that start terminals (POST /api/terminals…: open, batch, wake; src/http/routes/terminals.ts is the only
-  // route that creates them) wait for it, a few hundred ms after start and OPENCODE_VERSION_TIMEOUT_MS at most, and
-  // so does the restore. Every other request is served at once.
+  // route that creates them) wait for it, a few hundred ms after start and AGENT_PATH_TIMEOUT_MS +
+  // OPENCODE_VERSION_TIMEOUT_MS at most, and so does the restore. Every other request is served at once.
   let agentsReady = false;
   const ready = Promise.allSettled(beforeAgents).then(() => {
     agentsReady = true;
@@ -562,7 +564,8 @@ async function main(): Promise<void> {
     // Only now: every route has added its agent args and variables (opencode's once its version is known), and no
     // other Mirador holds the port.
     ready
-      .then(() => openAgents.restore({
+      .then(() => opencode)
+      .then(({ notices, bridgeless }) => openAgents.restore({
         registry: terminals,
         resolveFolder: (id, rel) => workspaces.resolve(id, rel),
         // The catalog agent's verified resume (`--session <file>` for gentle-shell or pi, `--resume <id>` for claude, `--session <id>` for opencode, `--conversation <id>` for agy); others start fresh.
@@ -571,7 +574,7 @@ async function main(): Promise<void> {
         sessionArgs: (file, agent) => {
           const command = (agent && agentLaunch(agent, config.agentCommand)?.agentCommand) || config.agentCommand;
           const args = resumeArgs(command, file, bridgeless);
-          if (!args.length && resumeArgs(command, file).length) opencodeNotices?.notResumed();
+          if (!args.length && resumeArgs(command, file).length) notices.notResumed();
           return args;
         },
         agentLaunch: (agent) => agentLaunch(agent, config.agentCommand),

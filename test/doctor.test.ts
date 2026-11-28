@@ -125,7 +125,9 @@ test('optional items found are ok: systemd, gentle-ai, agents on PATH, Engram an
     assert.match(stdout, new RegExp(`^  ok +gentle-ai: ${join(env.GENTLE_AI_HOME!, 'state.json')} \\(installed agents: pi, claude-code\\)$`, 'm'));
     assert.match(stdout, /^ {2}ok +agent pi: gentle-shell on PATH$/m);
     assert.match(stdout, /^ {2}ok +agent claude-code: claude on PATH$/m);
-    assert.match(stdout, /^ {2}ok +agent opencode: opencode on PATH \(not in gentle-ai's installed agents\)$/m);
+    // The stub exits 99 on `--version`: no version read, so the bridge stays, and the line names the file it ran.
+    const opencode = join(bin, 'opencode').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(stdout, new RegExp(`^  ok +agent opencode: opencode on PATH \\(not in gentle-ai's installed agents\\); could not read the version of ${opencode} \\(opencode --version exited with code 99\\); Mirador starts it with its bridge, which needs opencode 2\\.0\\.0 or newer$`, 'm'));
     assert.match(stdout, /^ {2}missing +agent kimi: kimi not on PATH$/m);
     assert.match(stdout, new RegExp(`^  ok +Engram: http://127\\.0\\.0\\.1:${port} answers$`, 'm'));
     assert.match(stdout, /^Mode: full \(config: auto\)$/m);

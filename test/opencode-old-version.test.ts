@@ -1,16 +1,17 @@
 // An opencode older than 2.0.0 (opencode 1.x has no `--standalone` and another plugin API, #124) starts
 // without Mirador's bridge, like Codex: no `--standalone`, no OPENCODE_CONFIG_CONTENT, no `--session` on a
 // restore or wake, so no attention, no resume and no idle sleep. The server reads `opencode --version` once
-// when it starts, says in one log line per launch kind which version is installed and which one is needed,
-// and GET /api/agents offers it with no attention and no resume. A version it cannot read keeps the bridge,
-// with one log line. The real server runs with a scratch HOME, runtime, state and config dir and a PATH of
-// stand-ins: the fake `opencode` answers `--version` and otherwise records its argv and
-// OPENCODE_CONFIG_CONTENT, then idles. No real agent binary ever runs.
+// when it starts, from the opencode agent terminals run (the configured path, else the `opencode` on the PATH the
+// agent bash gets from its ~/.bashrc), says in one log line per launch kind which opencode and version it found
+// and which one is needed, and GET /api/agents offers it with no attention and no resume. A version it cannot read
+// keeps the bridge, with one log line. Terminals and the restore wait for the version. The real server runs with a
+// scratch HOME, runtime, state and config dir and a PATH of stand-ins: the fake `opencode` answers `--version`
+// and otherwise records its argv and OPENCODE_CONFIG_CONTENT, then idles. No real agent binary ever runs.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scratchBase } from './helpers/scratch.ts';
@@ -18,8 +19,9 @@ import { scratchBase } from './helpers/scratch.ts';
 const APP_DIR = fileURLToPath(new URL('..', import.meta.url));
 const S1 = 'ses_7f3e2d1c0b9aXyZwVuTsRqPoNm';
 const S2 = 'ses_7f3e2d1c0b97QwErTyUiOpAsDf';
-const OLD_START = "mirador: opencode 1.19.6 is older than 2.0.0, the first opencode with --standalone and the plugin API Mirador's bridge needs: opencode agents start without it (no attention, no resume, no idle sleep); update opencode to 2.0.0 or newer";
-const OLD_RESUME = 'mirador: opencode 1.19.6 is older than 2.0.0, which resuming an opencode session from Mirador needs: a reopened or woken opencode agent starts a fresh session (no --session)';
+/** The log lines for an opencode 1.19.6 at `file`. */
+const OLD_START = (file: string) => `mirador: opencode 1.19.6 (${file}) is older than 2.0.0, the first opencode with --standalone and the plugin API Mirador's bridge needs: opencode agents start without it (no attention, no resume, no idle sleep); update opencode to 2.0.0 or newer`;
+const OLD_RESUME = (file: string) => `mirador: opencode 1.19.6 (${file}) is older than 2.0.0, which resuming an opencode session from Mirador needs: a reopened or woken opencode agent starts a fresh session (no --session)`;
 
 type Info = { id: string; rel: string; agent?: string };
 type Api = (method: string, path: string, body?: unknown) => Promise<Response>;
@@ -66,14 +68,23 @@ const fakeOpencode = (version: string) => [
   '',
 ].join('\n');
 
-/** A scratch Mirador home whose PATH holds gentle-shell and a fake opencode with `version`, config `extra`. */
-async function place(name: string, version: string, extra: object = {}): Promise<string> {
+/**
+ * A scratch Mirador home whose PATH holds gentle-shell and a fake opencode with `version`, config `extra`.
+ * `agentVersion` adds a second fake opencode in `<scratch>/agent-bin`, which only the agent bash's PATH has (its
+ * ~/.bashrc puts it first).
+ */
+async function place(name: string, version: string, extra: object = {}, agentVersion?: string): Promise<string> {
   const scratch = await realpath(await mkdtemp(join(scratchBase(), `mirador-opencode-old-${name}-`)));
   scratches.push(scratch);
   for (const rel of ['alpha', 'beta', 'gamma', 'delta']) await mkdir(join(scratch, 'root', rel), { recursive: true });
   await mkdir(join(scratch, 'home'), { recursive: true });
   await mkdir(join(scratch, 'bin'), { recursive: true });
   await writeFile(join(scratch, 'bin', 'opencode'), fakeOpencode(version), { mode: 0o755 });
+  if (agentVersion) {
+    await mkdir(join(scratch, 'agent-bin'), { recursive: true });
+    await writeFile(join(scratch, 'agent-bin', 'opencode'), fakeOpencode(agentVersion), { mode: 0o755 });
+    await writeFile(join(scratch, 'home', '.bashrc'), `PATH="${join(scratch, 'agent-bin')}:$PATH"\n`);
+  }
   await writeFile(join(scratch, 'bin', 'gentle-shell'), '#!/bin/sh\nexec /bin/sleep 600\n', { mode: 0o755 });
   await mkdir(join(scratch, 'gentle-ai'), { recursive: true });
   await writeFile(join(scratch, 'gentle-ai', 'state.json'), JSON.stringify({ installed_agents: ['pi', 'opencode'] }));
@@ -142,6 +153,7 @@ async function open(m: Mirador, rel: string, agent?: string): Promise<Info> {
 }
 
 const count = (output: string, line: string) => output.split('\n').filter((row) => row === line).length;
+const offered = async (m: Mirador) => ((await (await m.api('GET', '/api/agents')).json()) as { agents: Array<{ id: string | null; attention: string; resume: boolean }> }).agents;
 const restoreDone = (m: Mirador) => waitFor(async () => (/^mirador: reopened \d+ agent\(s\), dropped \d+$/m.test(m.output()) ? true : undefined), 15_000, () => `; server output:\n${m.output()}`);
 
 test('an opencode older than 2.0.0, chosen beside another agent, starts without --standalone or its plugin, offered with no attention or resume, and the log names both versions once', async () => {
@@ -153,19 +165,20 @@ test('an opencode older than 2.0.0, chosen beside another agent, starts without 
     assert.deepEqual(await started(m, alpha.id), { argv: ['opencode'], config: '<unset>' });
     const beta = await open(m, 'beta', 'opencode');
     assert.deepEqual(await started(m, beta.id), { argv: ['opencode'], config: '<unset>' });
-    assert.equal(count(m.output(), OLD_START), 1, `one log line for every opencode started; server output:\n${m.output()}`);
+    assert.equal(count(m.output(), OLD_START(join(m.scratch, 'bin', 'opencode'))), 1, `one log line for every opencode started; server output:\n${m.output()}`);
     assert.equal(m.output().includes('--standalone'), true, 'the log line says what the old opencode lacks');
   } finally {
     await m.stop();
   }
 });
 
-test('a configured opencode older than 2.0.0 starts exactly as configured, without --standalone or its plugin', async () => {
+test('a configured opencode older than 2.0.0 starts exactly as configured, without --standalone or its plugin, offered with no attention or resume', async () => {
   const m = await start(await place('configured', 'echo 1.19.6; exit 0', { agentCommand: 'opencode' }));
   try {
+    assert.deepEqual((await offered(m))[0], { id: 'opencode', label: 'opencode', command: 'opencode', configured: true, attention: 'none', resume: false });
     const alpha = await open(m, 'alpha');
     assert.deepEqual(await started(m, alpha.id), { argv: ['opencode'], config: '<unset>' });
-    assert.equal(count(m.output(), OLD_START), 1, m.output());
+    assert.equal(count(m.output(), OLD_START(join(m.scratch, 'bin', 'opencode'))), 1, m.output());
   } finally {
     await m.stop();
   }
@@ -190,8 +203,8 @@ test('with an opencode older than 2.0.0, a restore and a wake of opencode record
     assert.equal((await m.api('POST', '/api/terminals/sleeping/r-finished/wake')).status, 202);
     const delta = await waitFor(async () => ((await (await m.api('GET', '/api/terminals')).json()) as Info[]).find((info) => info.rel === 'delta'), 15_000);
     assert.deepEqual(await started(m, delta.id), { argv: ['opencode'], config: '<unset>' }, 'wake: no --session and no --standalone');
-    assert.equal(count(m.output(), OLD_RESUME), 1, `one log line for the opencode sessions not resumed; server output:\n${m.output()}`);
-    assert.equal(count(m.output(), OLD_START), 1, m.output());
+    assert.equal(count(m.output(), OLD_RESUME(join(m.scratch, 'bin', 'opencode'))), 1, `one log line for the opencode sessions not resumed; server output:\n${m.output()}`);
+    assert.equal(count(m.output(), OLD_START(join(m.scratch, 'bin', 'opencode'))), 1, m.output());
   } finally {
     await m.stop();
   }
@@ -206,10 +219,114 @@ test('an opencode whose version cannot be read keeps the bridge as before, with 
     const herdr = join(m.scratch, 'run', 'mirador', 'herdr', 'opencode-plugin');
     assert.deepEqual(await started(m, alpha.id), { argv: ['opencode', '--standalone'], config: JSON.stringify({ plugins: [herdr] }) });
     await open(m, 'beta', 'opencode');
-    const unreadable = m.output().split('\n').filter((row) => row.startsWith("mirador: could not read opencode's version"));
-    assert.deepEqual(unreadable, ["mirador: could not read opencode's version (opencode --version exited with code 3); opencode agents start with Mirador's bridge as before, which needs opencode 2.0.0 or newer"]);
+    const unreadable = m.output().split('\n').filter((row) => row.startsWith('mirador: could not read the version of'));
+    assert.deepEqual(unreadable, [`mirador: could not read the version of ${join(m.scratch, 'bin', 'opencode')} (opencode --version exited with code 3); opencode agents start with Mirador's bridge as before, which needs opencode 2.0.0 or newer`]);
     assert.equal(m.output().includes('is older than'), false);
   } finally {
     await m.stop();
   }
+});
+
+test('a 0.0.0-… development build of opencode keeps the bridge, with one log line', async () => {
+  const m = await start(await place('dev-build', 'echo 0.0.0-dev-202611271200; exit 0'));
+  try {
+    const alpha = await open(m, 'alpha', 'opencode');
+    assert.deepEqual((await started(m, alpha.id)).argv, ['opencode', '--standalone']);
+    const unreadable = m.output().split('\n').filter((row) => row.startsWith('mirador: could not read the version of'));
+    assert.deepEqual(unreadable, [`mirador: could not read the version of ${join(m.scratch, 'bin', 'opencode')} (opencode --version printed a development build (0.0.0-dev-202611271200), not a release); opencode agents start with Mirador's bridge as before, which needs opencode 2.0.0 or newer`]);
+  } finally {
+    await m.stop();
+  }
+});
+
+test('the opencode the agent bash runs is the one read: an old one on the server PATH and 2.x first on the agent PATH keeps the bridge', async () => {
+  const m = await start(await place('agent-path', 'echo 1.19.6; exit 0', {}, 'echo 2.1.0; exit 0'));
+  try {
+    assert.deepEqual((await offered(m)).find((agent) => agent.id === 'opencode'), { id: 'opencode', label: 'opencode', command: 'opencode', configured: false, attention: 'hooks', resume: true });
+    const alpha = await open(m, 'alpha', 'opencode');
+    const herdr = join(m.scratch, 'run', 'mirador', 'herdr', 'opencode-plugin');
+    assert.deepEqual(await started(m, alpha.id), { argv: ['opencode', '--standalone'], config: JSON.stringify({ plugins: [herdr] }) });
+    assert.equal(m.output().includes('is older than'), false, m.output());
+    assert.equal(m.output().includes('could not read'), false, m.output());
+  } finally {
+    await m.stop();
+  }
+});
+
+test('a configured agentCommand naming an old opencode by path is the one read, over a 2.x on PATH, and the log names it', async () => {
+  const scratch = await place('configured-path', 'echo 2.1.0; exit 0');
+  const old = join(scratch, 'old', 'opencode');
+  await mkdir(join(scratch, 'old'), { recursive: true });
+  await writeFile(old, fakeOpencode('echo 1.19.6; exit 0'), { mode: 0o755 });
+  const config = join(scratch, 'cfg', 'mirador', 'config.json');
+  await writeFile(config, JSON.stringify({ ...JSON.parse(await readFile(config, 'utf8')), agentCommand: old }));
+  const m = await start(scratch);
+  try {
+    assert.deepEqual((await offered(m))[0], { id: 'opencode', label: 'opencode', command: old, configured: true, attention: 'none', resume: false });
+    const alpha = await open(m, 'alpha');
+    assert.deepEqual(await started(m, alpha.id), { argv: ['opencode'], config: '<unset>' });
+    assert.equal(count(m.output(), OLD_START(old)), 1, m.output());
+  } finally {
+    await m.stop();
+  }
+});
+
+// A fake whose `--version` answers only once the test lets it (a slow pnpm-dlx wrapper on a cold cache), at most ~10 s.
+const SLOW = 'i=0; : > "$HOME/version-began"; while [ ! -e "$HOME/release" ] && [ $i -lt 200 ]; do /bin/sleep 0.05; i=$((i+1)); done; echo 2.1.0; exit 0';
+const versionBegan = (m: Mirador) => waitFor(async () => (await access(join(m.scratch, 'home', 'version-began')).then(() => true)));
+const release = (m: Mirador) => writeFile(join(m.scratch, 'home', 'release'), '');
+
+test('a terminal opened while a slow `opencode --version` is pending waits for it, then gets the bridge', async () => {
+  const m = await start(await place('slow-open', SLOW));
+  try {
+    await versionBegan(m);
+    let answered = false;
+    const opening = open(m, 'alpha', 'opencode').finally(() => (answered = true));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.equal(answered, false, 'POST /api/terminals waits for the version');
+    assert.deepEqual(await (await m.api('GET', '/api/terminals')).json(), [], 'no terminal before the version');
+    await release(m);
+    const alpha = await opening;
+    const herdr = join(m.scratch, 'run', 'mirador', 'herdr', 'opencode-plugin');
+    assert.deepEqual(await started(m, alpha.id), { argv: ['opencode', '--standalone'], config: JSON.stringify({ plugins: [herdr] }) });
+  } finally {
+    await m.stop();
+  }
+});
+
+test('the restore waits for a slow `opencode --version`, then resumes the opencode session with the bridge', async () => {
+  const scratch = await place('slow-restore', SLOW);
+  const record = { id: 'r-working', workspaceId: 'dev', rel: 'gamma', cwd: join(scratch, 'root', 'gamma'), cols: 90, rows: 33, sessionFile: null, createdAt: '2026-11-20T00:00:00.000Z', agent: 'opencode', session: S1, lastState: 'working' };
+  await mkdir(join(scratch, 'state', 'mirador'), { recursive: true });
+  await writeFile(join(scratch, 'state', 'mirador', 'open-agents.json'), JSON.stringify({ owner: join(scratch, 'cfg', 'mirador', 'config.json'), agents: [record] }), { mode: 0o600 });
+  const m = await start(scratch);
+  try {
+    await versionBegan(m);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.deepEqual(await (await m.api('GET', '/api/terminals')).json(), [], 'the restore waits for the version');
+    await release(m);
+    await restoreDone(m);
+    const gamma = await waitFor(async () => ((await (await m.api('GET', '/api/terminals')).json()) as Info[]).find((info) => info.rel === 'gamma'));
+    const herdr = join(m.scratch, 'run', 'mirador', 'herdr', 'opencode-plugin');
+    assert.deepEqual(await started(m, gamma.id), { argv: ['opencode', '--standalone', '--session', S1], config: JSON.stringify({ plugins: [herdr] }) });
+  } finally {
+    await m.stop();
+  }
+});
+
+test('a server stopped while `opencode --version` is pending ends it and its children, so nothing outlives the server', async () => {
+  const hang = '/bin/sleep 60 & echo $! > "$HOME/version-child.tmp"; /bin/mv "$HOME/version-child.tmp" "$HOME/version-child"; wait';
+  const m = await start(await place('stop-pending', hang));
+  const pidFile = join(m.scratch, 'home', 'version-child');
+  const child = await waitFor(async () => {
+    const text = await readFile(pidFile, 'utf8');
+    return text.endsWith('\n') ? Number(text.trim()) : undefined;
+  });
+  const alive = () => { try { process.kill(child, 0); return true; } catch { return false; } };
+  assert.equal(alive(), true, 'the version read is pending');
+  await m.stop();
+  for (let i = 0; i < 40 && alive(); i++) await new Promise((resolve) => setTimeout(resolve, 50));
+  const left = alive();
+  if (left) process.kill(child, 'SIGKILL');
+  assert.equal(left, false, 'the pending `opencode --version` ended with the server');
 });

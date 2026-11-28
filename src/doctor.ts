@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENTS, onPath } from './agents/catalog.ts';
 import { gentleAiStatePath, readInstalledAgents } from './agents/gentle-ai-state.ts';
-import { OLD_OPENCODE_LACKS, OPENCODE_BRIDGE_VERSION, readOpencodeVersion } from './agents/opencode-version.ts';
+import { opencodeDoctorNote, readOpencodeVersion } from './agents/opencode-version.ts';
 import { configPath, loadConfig, type Mode } from './config.ts';
 import { resolveMode } from './mode.ts';
 
@@ -15,8 +15,9 @@ import { resolveMode } from './mode.ts';
  * `node src/doctor.ts` (`pnpm run doctor`; `pnpm doctor` is pnpm's own command): what Mirador needs on this machine, present or missing.
  * Node 24+, node-pty and a browser opener
  * are required and decide the exit code; systemd, gentle-ai, the catalog agents and Engram only inform,
- * and so does the browser on Linux without a display ({@link noDisplay}). An opencode on PATH older than the
- * one Mirador's bridge needs (src/agents/opencode-version.ts) gets a `warn` line instead of `ok`.
+ * and so does the browser on Linux without a display ({@link noDisplay}). The opencode line names the opencode
+ * agent terminals run and its version (src/agents/opencode-version.ts); one older than Mirador's bridge needs
+ * gets a `warn` line instead of `ok`.
  * A missing gentle-shell, pi or Engram also gets a line under {@link NOT_FOUND} saying what Mirador does
  * without it and how to get it; it never changes the exit code.
  * `--report` adds a fenced block for bug reports: no home path, user
@@ -234,11 +235,16 @@ export async function doctor(options: DoctorOptions = {}): Promise<DoctorReport>
   const file = configPath(env);
   let mode: Mode = 'auto';
   let configuredBrowser: string | undefined;
+  // What agent terminals run opencode with: the configured agentCommand and the shell whose PATH they get.
+  let agentCommand: string | undefined;
+  let shell: string | undefined;
   const configLines: string[] = [];
   try {
     const config = await loadConfig(file, env);
     mode = config.mode;
     configuredBrowser = config.browser;
+    agentCommand = config.agentCommand;
+    shell = config.shell;
     configLines.push(`Config: ${file}${(await exists(file)) ? '' : ' (not found; defaults apply)'}`);
     for (const problem of [...config.workspaceProblems, ...config.launchProblems]) configLines.push(`  problem: ${problem}`);
   } catch (error) {
@@ -288,13 +294,11 @@ export async function doctor(options: DoctorOptions = {}): Promise<DoctorReport>
     if (found) agentsFound.push(`${agent.id} (${found})`);
     if (found && agent.id === 'pi') piFound = true;
     const note = found && state && !installed.includes(agent.id) ? " (not in gentle-ai's installed agents)" : '';
-    // `opencode --version`: one older than the bridge needs starts without it; one it cannot read keeps the ok line.
-    const opencode = found && agent.id === 'opencode' ? await readOpencodeVersion(env) : null;
-    if (opencode?.state === 'old') {
-      lines.push(item('warn', `agent ${agent.id}`, `${found} ${opencode.version} on PATH${note}, older than ${OPENCODE_BRIDGE_VERSION}, ${OLD_OPENCODE_LACKS}; Mirador starts it without attention or resume`));
-      continue;
-    }
-    lines.push(item(found !== null, `agent ${agent.id}`, found ? `${found} on PATH${note}` : `${agent.binary} not on PATH`));
+    // opencode's line adds the opencode agent terminals run and its `--version`: one older than the bridge needs
+    // starts without it and is a `warn`; one it cannot read keeps the bridge and the `ok`.
+    const extra = found && agent.id === 'opencode' ? opencodeDoctorNote(await readOpencodeVersion(env, { agentCommand, shell })) : null;
+    const detail = found ? `${found} on PATH${note}${extra ? `; ${extra.text}` : ''}` : `${agent.binary} not on PATH`;
+    lines.push(item(extra?.warn ? 'warn' : found !== null, `agent ${agent.id}`, detail));
   }
 
   const { url: engramUrl, answers: engram } = await checkEngram({ env, probeEngram: options.probeEngram });
