@@ -213,8 +213,11 @@ export async function checkBrowser(options: Pick<DoctorOptions, 'env' | 'platfor
   return { found: browser.opener !== null, detail: browser.detail };
 }
 
-const item = (found: boolean | 'warn', label: string, detail: string): string =>
-  `  ${(found === 'warn' ? 'warn' : found ? 'ok' : 'missing').padEnd(8)} ${label}: ${detail}`;
+/** A line's status: `ok`, `missing`, or `warn` (present but not as Mirador needs it, an opencode older than 2.0.0). */
+type Status = 'ok' | 'missing' | 'warn';
+/** `found` as a status: ok when found, else missing. */
+const status = (found: boolean): Status => (found ? 'ok' : 'missing');
+const item = (level: Status, label: string, detail: string): string => `  ${level.padEnd(8)} ${label}: ${detail}`;
 
 export async function doctor(options: DoctorOptions = {}): Promise<DoctorReport> {
   const env = options.env ?? process.env;
@@ -222,7 +225,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<DoctorReport>
   const missing: string[] = [];
   const required = (found: boolean, label: string, detail: string): string => {
     if (!found) missing.push(label);
-    return item(found, label, detail);
+    return item(status(found), label, detail);
   };
 
   const nodeVersion = options.nodeVersion ?? process.versions.node;
@@ -235,16 +238,14 @@ export async function doctor(options: DoctorOptions = {}): Promise<DoctorReport>
   const file = configPath(env);
   let mode: Mode = 'auto';
   let configuredBrowser: string | undefined;
-  // What agent terminals run opencode with: the configured agentCommand and the shell whose PATH they get.
+  // The configured agentCommand: when it names opencode by path, that is the opencode agent terminals run.
   let agentCommand: string | undefined;
-  let shell: string | undefined;
   const configLines: string[] = [];
   try {
     const config = await loadConfig(file, env);
     mode = config.mode;
     configuredBrowser = config.browser;
     agentCommand = config.agentCommand;
-    shell = config.shell;
     configLines.push(`Config: ${file}${(await exists(file)) ? '' : ' (not found; defaults apply)'}`);
     for (const problem of [...config.workspaceProblems, ...config.launchProblems]) configLines.push(`  problem: ${problem}`);
   } catch (error) {
@@ -262,7 +263,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<DoctorReport>
     ...(headless ? [] : [required(browser.opener !== null, 'browser', browser.detail)]),
     '',
     'Optional',
-    ...(headless ? [item(browser.opener !== null, 'browser', `${browser.detail}; ${NOT_REQUIRED}`)] : []),
+    ...(headless ? [item(status(browser.opener !== null), 'browser', `${browser.detail}; ${NOT_REQUIRED}`)] : []),
   ];
 
   const systemdRun = await onPath('systemd-run', env.PATH);
@@ -271,15 +272,15 @@ export async function doctor(options: DoctorOptions = {}): Promise<DoctorReport>
   const systemdParts = [systemdRun ? 'systemd-run on PATH' : 'no systemd-run on PATH', bus ? 'user bus' : 'no user bus'];
   if ((options.platform ?? process.platform) === 'darwin') {
     // macOS has no systemd or cgroups: the server turns scopes off without probing (src/terminals/scopes.ts).
-    lines.push(item(false, 'systemd', 'not on macOS; terminals run without memory limits (limits not available on macOS)'));
+    lines.push(item('missing', 'systemd', 'not on macOS; terminals run without memory limits (limits not available on macOS)'));
   } else {
-    lines.push(item(systemdRun || bus, 'systemd', `${systemdParts.join(', ')}${scopes ? '' : '; terminals run without scopes'}`));
+    lines.push(item(status(systemdRun || bus), 'systemd', `${systemdParts.join(', ')}${scopes ? '' : '; terminals run without scopes'}`));
   }
 
   const statePath = gentleAiStatePath(env);
   const state = await exists(statePath);
   const installed = await readInstalledAgents(env);
-  lines.push(item(state, 'gentle-ai', state ? `${statePath} (installed agents: ${installed.join(', ') || 'none'})` : `no ${statePath}`));
+  lines.push(item(status(state), 'gentle-ai', state ? `${statePath} (installed agents: ${installed.join(', ') || 'none'})` : `no ${statePath}`));
 
   const agentsFound: string[] = [];
   let piFound = false;
@@ -296,13 +297,13 @@ export async function doctor(options: DoctorOptions = {}): Promise<DoctorReport>
     const note = found && state && !installed.includes(agent.id) ? " (not in gentle-ai's installed agents)" : '';
     // opencode's line adds the opencode agent terminals run and its `--version`: one older than the bridge needs
     // starts without it and is a `warn`; one it cannot read keeps the bridge and the `ok`.
-    const extra = found && agent.id === 'opencode' ? opencodeDoctorNote(await readOpencodeVersion(env, { agentCommand, shell })) : null;
+    const extra = found && agent.id === 'opencode' ? opencodeDoctorNote(await readOpencodeVersion(env, { agentCommand })) : null;
     const detail = found ? `${found} on PATH${note}${extra ? `; ${extra.text}` : ''}` : `${agent.binary} not on PATH`;
-    lines.push(item(extra?.warn ? 'warn' : found !== null, `agent ${agent.id}`, detail));
+    lines.push(item(extra?.status ?? status(found !== null), `agent ${agent.id}`, detail));
   }
 
   const { url: engramUrl, answers: engram } = await checkEngram({ env, probeEngram: options.probeEngram });
-  lines.push(item(engram, 'Engram', engram ? `${engramUrl} answers` : `no answer at ${engramUrl}; memory views stay empty`));
+  lines.push(item(status(engram), 'Engram', engram ? `${engramUrl} answers` : `no answer at ${engramUrl}; memory views stay empty`));
 
   const resolved = await resolveMode(mode, env);
   const notices: string[] = [];

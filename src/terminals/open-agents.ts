@@ -116,6 +116,11 @@ export interface RestoreOptions {
   sleep?(ms: number): Promise<void>;
   /** The server's launch gate (src/system/memory-gate.ts): batches that settle, and enough memory. */
   gate?: LaunchGate;
+  /**
+   * What a record of agent `agent` (its catalog id; absent: the configured agentCommand) waits for before it
+   * starts, null when it may start now: the server's opencode version and bridge (#124), for opencode records only.
+   */
+  ready?(agent?: string): Promise<unknown> | null;
 }
 
 /** Pause between two agents Mirador opens in a row: at restore and in a batch (src/terminals/open-many.ts). */
@@ -477,9 +482,12 @@ export class OpenAgents {
    * continuing each one's session when its file is still valid. Stops at keep(). With a gate,
    * each agent also waits for its turn; when the gate gives up on memory the rest keep their
    * records for the next start (one log line), and a closed gate stops the restore. The agents
-   * that had finished their turn are not reopened: they sleep (lazy restore).
+   * that had finished their turn are not reopened: they sleep (lazy restore). Records whose agent must wait
+   * (`options.ready`) reopen after the others, in a second launch run once it is done. Once the shutdown began
+   * (keep()) it does nothing at all: no previous agent is ended, no record changes.
    */
   async restore(options: RestoreOptions): Promise<{ restored: number; dropped: number }> {
+    if (this.kept) return { restored: 0, dropped: 0 };
     this.reopenWith = options;
     const stillRunning = new Set(this.pending.length > 0 && options.endPrevious ? await options.endPrevious([...this.pending]) : []);
     this.stillRunning = stillRunning;
@@ -494,16 +502,36 @@ export class OpenAgents {
       this.save();
     }
     const queue = this.pending.filter((record) => !stillRunning.has(record.id));
-    const run = queue.length > 0 ? options.gate?.run({ kind: 'restore', total: queue.length, sleeping: asleep.length }) : undefined;
-    const { restored, dropped, lowMemory } = await this.reopen(queue, options, run, (record) => this.pending.includes(record), new Set());
-    if (lowMemory) this.log(`mirador: ${lowMemory} open agent(s) not reopened: available memory stayed under the reserve; their records stay for the next start`);
-    return { restored, dropped };
+    // The records that may start now reopen first; those that wait, in their own run once they may.
+    const waits = new Map(queue.map((record) => [record, options.ready?.(record.agent) ?? null]));
+    const now = queue.filter((record) => !waits.get(record));
+    const later = queue.filter((record) => waits.get(record));
+    const queued = (record: OpenAgentRecord) => this.pending.includes(record);
+    const continued = new Set<string>();
+    const total = { restored: 0, dropped: 0, lowMemory: 0 };
+    const add = (part: { restored: number; dropped: number; lowMemory: number }) => {
+      total.restored += part.restored;
+      total.dropped += part.dropped;
+      total.lowMemory += part.lowMemory;
+    };
+    // Pausar, low memory or the shutdown in the first run stop the restore, as they did before.
+    const first = now.length ? await this.reopen(now, options, options.gate?.run({ kind: 'restore', total: now.length, sleeping: asleep.length }), queued, continued) : null;
+    if (first) add(first);
+    if (later.length && !first?.stopped) {
+      await Promise.allSettled(later.map((record) => waits.get(record)));
+      if (!this.kept) add(await this.reopen(later, options, options.gate?.run({ kind: 'restore', total: later.length, sleeping: first ? 0 : asleep.length }), queued, continued));
+    } else if (later.length && first?.lowMemory) {
+      total.lowMemory += later.filter(queued).length;
+    }
+    if (total.lowMemory) this.log(`mirador: ${total.lowMemory} open agent(s) not reopened: available memory stayed under the reserve; their records stay for the next start`);
+    return { restored: total.restored, dropped: total.dropped };
   }
 
   /**
    * Opens an agent for each record of `queue`, one after another, as restore() and wake() do. A
    * record no longer `queued` (replaced meanwhile by an agent opened in its folder) is skipped; a
-   * session file one opened before continues (`continued`) starts fresh. Stops at keep(), a
+   * session file one opened before continues (`continued`) starts fresh. A record whose agent must wait
+   * (`options.ready`: a wake of an opencode record before its version is known) waits there. Stops at keep(), a
    * cancelled run, or low memory (`lowMemory`: how many records it left then). Ends `run` with the
    * folders it left, for the loading bar.
    */
@@ -513,7 +541,7 @@ export class OpenAgents {
     run: LaunchRun | undefined,
     queued: (record: OpenAgentRecord) => boolean,
     continued: Set<string>,
-  ): Promise<{ restored: number; dropped: number; lowMemory: number }> {
+  ): Promise<{ restored: number; dropped: number; lowMemory: number; stopped: boolean }> {
     const delayMs = options.delayMs ?? RESTORE_DELAY_MS;
     const pause = options.sleep ?? sleep;
     let restored = 0;
@@ -533,6 +561,15 @@ export class OpenAgents {
             this.log(`mirador: dropped the open agent of workspace ${JSON.stringify(record.workspaceId)} folder ${JSON.stringify(record.rel)}: Mirador no longer knows its agent ${JSON.stringify(record.agent)}`);
             this.drop(record);
             dropped++;
+            run?.skip();
+            continue;
+          }
+        }
+        const wait = options.ready?.(record.agent);
+        if (wait) {
+          await Promise.allSettled([wait]);
+          if (this.kept) break;
+          if (!queued(record)) {
             run?.skip();
             continue;
           }
@@ -600,7 +637,8 @@ export class OpenAgents {
       const left = new Map(queue.filter(queued).map(({ workspaceId, rel }) => [JSON.stringify([workspaceId, rel]), { workspaceId, rel }]));
       run?.end([...left.values()]);
     }
-    return { restored, dropped, lowMemory };
+    // Stopped before the end (keep(), a cancelled run, low memory): every record it went through is dropped.
+    return { restored, dropped, lowMemory, stopped: queue.some(queued) };
   }
 
   /** Drops a record not reopened (pending or sleeping) and writes the rest. */

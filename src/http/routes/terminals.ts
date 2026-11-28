@@ -150,6 +150,9 @@ export const terminalRoutes: RouteModule = (ctx) => {
           throw new HttpError(409, 'Mirador is opening agents; open this one once they are open, or after Pausar', 'launches_running');
         }
         const folder = await ctx.resolveFolder(body.ws, body.rel);
+        // An opencode agent (chosen, or the configured agentCommand) waits for its version and bridge; any other
+        // terminal starts at once (ctx.opencodeReady).
+        if (kind === 'agent') await ctx.opencodeReady?.(agent?.agent);
         const info = ctx.terminals.create({
           cwd: folder.path,
           kind,
@@ -175,6 +178,8 @@ export const terminalRoutes: RouteModule = (ctx) => {
         const { workspace } = await ctx.resolveFolder(body.ws, '');
         const rels = asked === 'saved' ? (workspace.projects ?? []) : asked;
         if (!rels.length) throw new HttpError(400, 'this workspace has no saved projects', 'workspace_projects_empty');
+        // A batch opens the configured agentCommand: when that is opencode, it waits for its version and bridge.
+        await ctx.opencodeReady?.();
         const night = delegated ? nightService(ctx.terminals) : null;
         let autopilot: AutopilotOutcome | undefined;
         // The instruction becomes the agent's first message on pi's command line, like --session at a restore (server.ts).

@@ -228,9 +228,6 @@ export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-/** The terminal type every terminal gets on top of its environment (also what the agent shell's PATH is read with, src/agents/opencode-version.ts). */
-export const TERMINAL_VARS = { TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'mirador' } as const;
-
 /**
  * Removes variables that a parent gentle-shell, Claude Code or tmux session exports,
  * so each terminal starts like a fresh login terminal.
@@ -331,7 +328,9 @@ export class TerminalRegistry {
     const env: Record<string, string> = {
       ...cleanEnv(this.options.env),
       ...Object.assign({}, ...this.envProviders.map((provider) => provider({ ...info }))),
-      ...TERMINAL_VARS,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      TERM_PROGRAM: 'mirador',
     };
     let args = ['-i'];
     if (request.kind === 'agent') {

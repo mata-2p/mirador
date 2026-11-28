@@ -101,7 +101,7 @@ export const inboxRoutes: RouteModule = async (ctx) => {
     ctx.terminals.addChosenAgentArgs('antigravity', bridgeArgs('agy', bridges, ctx.config.attentionBridge));
     // opencode's bridge, configured or chosen, once the server has read `opencode --version` (beside the boot): an
     // opencode older than 2.0.0 has no `--standalone` and another plugin API, so it gets none and starts as
-    // configured. No terminal starts before this is done (ctx.beforeAgents).
+    // configured. No opencode terminal starts before this is done (ctx.beforeOpencode); other terminals do not wait.
     const opencodeBridge = (ctx.opencodeVersion ?? Promise.resolve(undefined)).then(async (version) => {
       if (!opencodeBridged(version)) return;
       const opencode = { opencode: await prepareOpencodePlugin(paths.dir, OPENCODE_PLUGIN) };
@@ -110,7 +110,7 @@ export const inboxRoutes: RouteModule = async (ctx) => {
       ctx.terminals.addChosenAgentArgs('opencode', bridgeArgs('opencode', opencode, ctx.config.attentionBridge));
     });
     opencodeBridge.catch((error) => console.error('mirador: the opencode bridge could not be prepared:', error));
-    ctx.beforeAgents?.(opencodeBridge);
+    ctx.beforeOpencode?.(opencodeBridge);
   } catch (error) {
     console.error('attention inbox disabled, the herdr socket could not be opened:', error);
   }

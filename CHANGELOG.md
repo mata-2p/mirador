@@ -48,11 +48,13 @@ All notable changes to Mirador, written for the people who run it. The format fo
   the bridge, like Codex: no `--standalone` and no plugin, so no state cards, no resume (a restore or wake starts a
   fresh session, never `--session`) and no idle sleep. The log says it once per kind of launch, naming the
   installed and the required version, `GET /api/agents` offers it with no attention and no resume, and
-  `mirador doctor` (and so `install.sh`) prints a `warn` line for it. The version read is that of the opencode
-  agent terminals run: the configured `agentCommand`'s path, else the `opencode` on the `PATH` they get after
-  `~/.bashrc`; the log and doctor name that file. A pre-release counts by its `x.y.z`. A version that cannot be
-  read (no answer within 15 s, a `0.0.0-…` development build) keeps the bridge, as before, with one log line.
-  Restart Mirador after updating opencode.
+  `mirador doctor` (and so `install.sh`) prints a `warn` line for it. The version read is that of the configured
+  `agentCommand` when it names opencode by its full path, else of the `opencode` on Mirador's own `PATH` (your
+  `~/.bashrc` is not run for it: if it puts a different opencode first, configure `agentCommand` with that one's
+  full path); the log and doctor name that file. The last `x.y.z` opencode prints counts, and a pre-release counts
+  by its `x.y.z`. A version that cannot be read (no answer within 15 s, a `0.0.0-…` development build) keeps the
+  bridge, as before, with one log line. Only opencode terminals wait for the version at start (and the agent list);
+  shells and other agents open at once. Restart Mirador after updating opencode.
 
 ## [0.2.0] - 2026-11-26
 

@@ -2,14 +2,15 @@
 // plugin API (setup(ctx), session.execution.*, permission.*, form.*); opencode 1.x has neither
 // (opencode's v2.0.0 tag). `opencode --version` is read once, without a shell and within a bounded time, from the
 // opencode an agent terminal runs: the configured `agentCommand`'s when it names opencode by path, else the
-// `opencode` on the PATH the agent bash gets (its startup files may extend PATH). `mirador doctor` names that
-// opencode and warns about an older one. Fake `opencode` scripts on a scratch PATH stand in for the real one; no
-// real agent binary ever runs.
+// `opencode` on Mirador's own PATH (a ~/.bashrc is never run for it). `mirador doctor` names that opencode and warns
+// about an older one. Fake `opencode` scripts on a scratch PATH stand in for the real one; no real agent binary
+// ever runs.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as versions from '../src/agents/opencode-version.ts';
 import { OPENCODE_BRIDGE_VERSION, OPENCODE_VERSION_TIMEOUT_MS, oldOpencodeText, readOpencodeVersion } from '../src/agents/opencode-version.ts';
 import { doctor } from '../src/doctor.ts';
 
@@ -108,18 +109,15 @@ test('a configured agentCommand naming opencode by path is the opencode read, no
   }
 });
 
-test('with the agent shell, opencode is looked up on the PATH its ~/.bashrc leaves, and --version runs with that PATH', async () => {
-  const server = await withOpencode('echo 1.19.6');
-  const agent = await withOpencode('echo "$PATH" > "$HOME/version-path"; echo 2.2.0');
-  const env = { PATH: server, HOME: await home(`echo noise from bashrc; PATH="${agent}:$PATH"`) };
-  assert.deepEqual(await readOpencodeVersion(env, { shell: '/bin/bash' }), { state: 'ok', version: '2.2.0', file: join(agent, 'opencode') });
-  assert.equal(await readFile(join(env.HOME, 'version-path'), 'utf8'), `${agent}:${server}\n`);
-  // A shell that cannot run, or a ~/.bashrc that ends it before it prints, leaves the server's PATH.
-  assert.deepEqual(await readOpencodeVersion(env, { shell: join(scratch, 'no-such-shell') }), { state: 'old', version: '1.19.6', file: join(server, 'opencode') });
-  const exits = { PATH: server, HOME: await home(`PATH="${agent}:$PATH"; exit 7`) };
-  assert.deepEqual(await readOpencodeVersion(exits, { shell: '/bin/bash' }), { state: 'old', version: '1.19.6', file: join(server, 'opencode') });
-  // Without HOME the shell would read the account's own ~/.bashrc: the server's PATH instead.
-  assert.deepEqual(await readOpencodeVersion({ PATH: server }, { shell: '/bin/bash' }), { state: 'old', version: '1.19.6', file: join(server, 'opencode') });
+test('a wrapper that prints its own version first: the last x.y.z on stdout is opencode\'s', async () => {
+  for (const [body, expected] of [
+    ['echo "opencode-wrapper 1.4.0"; echo 2.1.0', { state: 'ok', version: '2.1.0' }],
+    ['echo "wrapper 3.0.0"; echo "opencode 1.19.6"', { state: 'old', version: '1.19.6' }],
+    ['echo "wrapper 1.0.0"; echo 0.0.0-dev-202611271200', { state: 'unreadable', reason: 'opencode --version printed a development build (0.0.0-dev-202611271200), not a release' }],
+  ] as const) {
+    const { file, read } = await versionOf(body);
+    assert.deepEqual(read, { ...expected, file }, body);
+  }
 });
 
 test('readOpencodeVersion runs the program itself with --version, no shell, and gives up on one that hangs, ending it and its children', async () => {
@@ -160,15 +158,24 @@ test('mirador doctor names the opencode agent terminals run: its version when 2.
   for (const [body, detail] of [
     ['echo 2.0.0', (file: string) => `opencode 2.0.0 (${file}), with Mirador's bridge`],
     ['echo opencode v2.4.2', (file: string) => `opencode 2.4.2 (${file}), with Mirador's bridge`],
-    ['exit 99', (file: string) => `could not read the version of ${file} (opencode --version exited with code 99); Mirador starts it with its bridge, which needs opencode 2.0.0 or newer`],
+    ['exit 99', (file: string) => `could not read the version of ${file} (opencode --version exited with code 99); opencode agents start with Mirador's bridge as before, which needs opencode 2.0.0 or newer`],
   ] as const) {
     const dir = await withOpencode(body);
     const report = await runDoctor(await doctorEnv(dir));
     assert.equal(agentLine(report.lines), `  ok       agent opencode: opencode on PATH; ${detail(join(dir, 'opencode'))}`, body);
   }
-  // The agent bash's PATH wins: its ~/.bashrc puts a newer opencode first.
+  // The words for a version it could not read are the server's log line's (OpencodeNotices).
+  const unreadable = await withOpencode('exit 99');
+  const words = (versions as Record<string, unknown>).unreadableOpencodeText as ((version: { reason: string; file: string }) => string) | undefined;
+  assert.equal(typeof words, 'function', 'one helper words an unreadable version for doctor and the log');
+  assert.ok(agentLine((await runDoctor(await doctorEnv(unreadable))).lines)!.endsWith(words!({ reason: 'opencode --version exited with code 99', file: join(unreadable, 'opencode') })));
+});
+
+test('mirador doctor reads the opencode on its own PATH and never runs ~/.bashrc, even when it puts another opencode first', async () => {
   const server = await withOpencode('echo 1.19.6');
   const agent = await withOpencode('echo 2.5.0');
-  const report = await runDoctor(await doctorEnv(server, `PATH="${agent}:$PATH"`));
-  assert.equal(agentLine(report.lines), `  ok       agent opencode: opencode on PATH; opencode 2.5.0 (${join(agent, 'opencode')}), with Mirador's bridge`);
+  const env = await doctorEnv(server, `: > "$HOME/bashrc-ran"; PATH="${agent}:$PATH"`);
+  const report = await runDoctor(env);
+  assert.equal(agentLine(report.lines), `  warn     agent opencode: opencode on PATH; ${oldOpencodeText({ version: '1.19.6', file: join(server, 'opencode') })}; Mirador starts it without attention or resume`);
+  await assert.rejects(readFile(join(env.HOME, 'bashrc-ran')), { code: 'ENOENT' }, '~/.bashrc was not run');
 });

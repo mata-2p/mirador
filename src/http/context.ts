@@ -32,10 +32,16 @@ export interface AppContext {
    */
   readonly opencodeVersion?: Promise<OpencodeVersion>;
   /**
-   * Work a route module started that terminals need (opencode's bridge, once its version is known): API requests
-   * and the startup restore wait for it before they run, so no terminal starts without it. Absent in tests.
+   * Work a route module started that opencode terminals need (opencode's bridge, once its version is known): no
+   * opencode terminal starts before it is done (opencodeReady). Absent in tests.
    */
-  beforeAgents?(work: Promise<unknown>): void;
+  beforeOpencode?(work: Promise<unknown>): void;
+  /**
+   * What an agent terminal of catalog id `agent` (absent or null: the configured agentCommand) waits for before it
+   * starts: opencode's version and bridge (beforeOpencode) while they are not known yet and it runs opencode; null
+   * when it may start now. Absent in tests.
+   */
+  opencodeReady?(agent?: string | null): Promise<void> | null;
 }
 
 /** A feature's server half: it receives the shared context and returns its routes. */

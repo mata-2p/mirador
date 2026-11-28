@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import { isAbsolute, join } from 'node:path';
-import { cleanEnv, TERMINAL_VARS } from '../terminals/registry.ts';
 import { agentFor, whichOnPath } from './catalog.ts';
 
 /**
@@ -9,6 +8,9 @@ import { agentFor, whichOnPath } from './catalog.ts';
  * `ctx.event.subscribe` and the session.execution.*, permission.* and form.* events bin/opencode-plugin.js
  * follows). opencode 1.x has neither `--standalone` nor that plugin API: it prints its help and exits. The
  * source: opencode's v2.0.0 tag, packages/cli/src/commands/commands.ts (ServerParams.standalone, the root session flag).
+ * They are root-command flags there, and its parser (effect 4.0.0-rc.112, unstable/cli) reads a command's flags in any
+ * order, also after other flags or a directory argument, so Mirador appending them after the user's own words works
+ * from 2.0.0 on; opencode 2.2.0's "Accept --server and --standalone anywhere" (#58505) is about subcommands.
  */
 export const OPENCODE_BRIDGE_VERSION = '2.0.0';
 /**
@@ -17,8 +19,6 @@ export const OPENCODE_BRIDGE_VERSION = '2.0.0';
  * is unreadable, which keeps the bridge. Tests pass a shorter `timeoutMs`.
  */
 export const OPENCODE_VERSION_TIMEOUT_MS = 15_000;
-/** How long the agent bash may take to load its startup files and print its PATH. */
-export const AGENT_PATH_TIMEOUT_MS = 5000;
 const MAX_OUTPUT = 4096;
 
 /**
@@ -31,9 +31,12 @@ export type OpencodeVersion =
   | { state: 'old' | 'ok'; version: string; file: string }
   | { state: 'unreadable'; reason: string; file: string };
 
-/** The first `major.minor.patch`, with its `-pre-release` suffix if any, in `text`. */
+/**
+ * The last `major.minor.patch`, with its `-pre-release` suffix if any, in `text`: a wrapper may print its own
+ * version before opencode's.
+ */
 function versionIn(text: string): { numbers: [number, number, number]; text: string } | null {
-  const match = /(?<![\d.])(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?/.exec(text);
+  const match = [...text.matchAll(/(?<![\d.])(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?/g)].at(-1);
   return match ? { numbers: [Number(match[1]), Number(match[2]), Number(match[3])], text: match[0] } : null;
 }
 
@@ -48,7 +51,7 @@ const older = (a: readonly number[], b: readonly number[]): boolean => {
  * group (a wrapper script's children too); that, an exit other than 0 or a spawn error gives a reason naming
  * `what` instead.
  */
-function runBounded(file: string, args: string[], options: { env: NodeJS.ProcessEnv; cwd?: string; timeoutMs: number; what: string; signal?: AbortSignal }): Promise<{ stdout: string } | { reason: string }> {
+function runBounded(file: string, args: string[], options: { env: NodeJS.ProcessEnv; timeoutMs: number; what: string; signal?: AbortSignal }): Promise<{ stdout: string } | { reason: string }> {
   const { what, timeoutMs, signal } = options;
   if (signal?.aborted) return Promise.resolve({ reason: `${what} was not run: Mirador is stopping` });
   return new Promise((resolve) => {
@@ -67,7 +70,7 @@ function runBounded(file: string, args: string[], options: { env: NodeJS.Process
     };
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(file, args, { env: options.env, cwd: options.cwd, stdio: ['ignore', 'pipe', 'ignore'], detached: true });
+      child = spawn(file, args, { env: options.env, stdio: ['ignore', 'pipe', 'ignore'], detached: true });
     } catch (error) {
       resolve({ reason: `${what} could not run (${(error as NodeJS.ErrnoException).code ?? 'error'})` });
       return;
@@ -96,70 +99,43 @@ function runBounded(file: string, args: string[], options: { env: NodeJS.Process
   });
 }
 
-const PATH_MARK = /<mirador-path>([^\n]*)<\/mirador-path>/g;
-
-/**
- * The PATH an agent terminal's bash gets: `shell -i -c` loads the same startup files as the agent bash
- * (`bash --rcfile agent.bashrc -i`, whose rcfile loads ~/.bashrc; src/terminals/agent-rc.ts) with the terminal's
- * environment (TerminalRegistry.create), then prints PATH between marks, so whatever ~/.bashrc prints is
- * skipped. It runs no agent: MIRADOR_AGENT_COMMAND is never set. Null, so the server's PATH applies, without a
- * HOME (the shell would read the account's own ~/.bashrc), or when the shell fails, ends before printing or takes
- * longer than `timeoutMs`.
- */
-export async function agentShellPath(shell: string, env: NodeJS.ProcessEnv, options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<string | null> {
-  if (!env.HOME || !isAbsolute(env.HOME)) return null;
-  const printPath = `printf '\\n<mirador-path>%s</mirador-path>\\n' "$PATH"`;
-  const outcome = await runBounded(shell, ['-i', '-c', printPath], {
-    env: { ...cleanEnv(env), ...TERMINAL_VARS },
-    cwd: env.HOME,
-    timeoutMs: options.timeoutMs ?? AGENT_PATH_TIMEOUT_MS,
-    what: 'the agent shell',
-    signal: options.signal,
-  });
-  if ('reason' in outcome) return null;
-  const marks = [...outcome.stdout.matchAll(PATH_MARK)];
-  return marks.length ? marks[marks.length - 1][1] : null;
-}
-
 /** Where readOpencodeVersion looks for the opencode an agent terminal runs. */
 export interface OpencodeLookup {
   /** The configured agentCommand: when it is opencode named by a path, that file is the one read. */
   agentCommand?: string;
-  /** The agent terminals' shell (config `shell`): opencode is looked up on the PATH it leaves (agentShellPath). */
-  shell?: string;
   timeoutMs?: number;
   /** Ends a read still running when it aborts (the server stops), so no `opencode --version` outlives the server. */
   signal?: AbortSignal;
 }
 
 /**
- * The opencode an agent terminal runs and the PATH it runs with: the configured `agentCommand`'s program when that
- * starts opencode by path (`~/` is HOME, as bash expands it), else the `opencode` on the agent shell's PATH (or
- * `env.PATH` without a shell, or when the shell gives none). A relative path is a string: each folder resolves it.
+ * The opencode an agent terminal runs: the configured `agentCommand`'s program when that starts opencode by path
+ * (`~/` is HOME, as bash expands it), else the `opencode` on Mirador's own PATH (`env.PATH`). A ~/.bashrc that puts
+ * another opencode first is not followed: running it at every start costs more than it gives (docs/extending.md
+ * says to configure `agentCommand` with the full path then). A relative path is a string: each folder resolves it.
  */
-async function locateOpencode(env: NodeJS.ProcessEnv, lookup: OpencodeLookup): Promise<{ file: string | null; relative?: string; path: string | undefined }> {
-  const path = (lookup.shell ? await agentShellPath(lookup.shell, env, { signal: lookup.signal }) : null) ?? env.PATH;
+async function locateOpencode(env: NodeJS.ProcessEnv, lookup: OpencodeLookup): Promise<{ file: string | null; relative?: string }> {
   const program = lookup.agentCommand && agentFor(lookup.agentCommand)?.id === 'opencode' ? lookup.agentCommand.trim().split(/\s+/)[0] : '';
   if (program.includes('/')) {
-    if (program.startsWith('~/') && env.HOME) return { file: join(env.HOME, program.slice(2)), path };
-    if (isAbsolute(program)) return { file: program, path };
-    return { file: null, relative: program, path };
+    if (program.startsWith('~/') && env.HOME) return { file: join(env.HOME, program.slice(2)) };
+    if (isAbsolute(program)) return { file: program };
+    return { file: null, relative: program };
   }
-  return { file: await whichOnPath('opencode', path), path };
+  return { file: await whichOnPath('opencode', env.PATH) };
 }
 
 /**
  * Reads `opencode --version` of the opencode an agent terminal runs (locateOpencode): run directly (no shell),
- * with `env` and the agent's PATH, the first version on its stdout. One that has not finished within `timeoutMs`
- * is ended with its whole process group and counts as unreadable; so does a `0.0.0-…` development build. Any
- * other pre-release compares by its `x.y.z`.
+ * with `env`, the last version on its stdout. One that has not finished within `timeoutMs` is ended with its
+ * whole process group and counts as unreadable; so does a `0.0.0-…` development build. Any other pre-release
+ * compares by its `x.y.z`.
  */
 export async function readOpencodeVersion(env: NodeJS.ProcessEnv, lookup: OpencodeLookup = {}): Promise<OpencodeVersion> {
   const located = await locateOpencode(env, lookup);
   if (located.relative) return { state: 'unreadable', file: located.relative, reason: 'agentCommand names opencode by a relative path, which each folder resolves on its own' };
   const file = located.file;
   if (!file) return { state: 'absent' };
-  const outcome = await runBounded(file, ['--version'], { env: { ...env, PATH: located.path }, timeoutMs: lookup.timeoutMs ?? OPENCODE_VERSION_TIMEOUT_MS, what: 'opencode --version', signal: lookup.signal });
+  const outcome = await runBounded(file, ['--version'], { env, timeoutMs: lookup.timeoutMs ?? OPENCODE_VERSION_TIMEOUT_MS, what: 'opencode --version', signal: lookup.signal });
   if ('reason' in outcome) return { state: 'unreadable', reason: outcome.reason, file };
   const found = versionIn(outcome.stdout);
   if (!found) return { state: 'unreadable', reason: 'opencode --version printed no version', file };
@@ -180,18 +156,19 @@ const named = (version: { version: string; file: string }): string => `opencode 
 export const oldOpencodeText = (version: { version: string; file: string }): string =>
   `${named(version)} is older than ${OPENCODE_BRIDGE_VERSION}, the first opencode with --standalone and the plugin API Mirador's bridge needs`;
 
-/** A version that could not be read, and that the bridge stays: also shared by doctor and the log. */
-const unreadableText = (version: { reason: string; file: string }): string => `could not read the version of ${version.file} (${version.reason})`;
+/** A version that could not be read, and that the bridge stays: the words `mirador doctor` and the server's log share. */
+export const unreadableOpencodeText = (version: { reason: string; file: string }): string =>
+  `could not read the version of ${version.file} (${version.reason}); opencode agents start with Mirador's bridge as before, which needs opencode ${OPENCODE_BRIDGE_VERSION} or newer`;
 
 /**
- * What `mirador doctor` adds to its opencode line for `version` (null for none found), and whether that line is
- * a `warn`: only an opencode older than the bridge is.
+ * What `mirador doctor` adds to its opencode line for `version` (null for none found), and that line's status:
+ * `warn` only for an opencode older than the bridge.
  */
-export function opencodeDoctorNote(version: OpencodeVersion): { warn: boolean; text: string } | null {
+export function opencodeDoctorNote(version: OpencodeVersion): { status: 'ok' | 'warn'; text: string } | null {
   if (version.state === 'absent') return null;
-  if (version.state === 'unreadable') return { warn: false, text: `${unreadableText(version)}; Mirador starts it with its bridge, which needs opencode ${OPENCODE_BRIDGE_VERSION} or newer` };
-  if (version.state === 'old') return { warn: true, text: `${oldOpencodeText(version)}; Mirador starts it without attention or resume` };
-  return { warn: false, text: `${named(version)}, with Mirador's bridge` };
+  if (version.state === 'unreadable') return { status: 'ok', text: unreadableOpencodeText(version) };
+  if (version.state === 'old') return { status: 'warn', text: `${oldOpencodeText(version)}; Mirador starts it without attention or resume` };
+  return { status: 'ok', text: `${named(version)}, with Mirador's bridge` };
 }
 
 /**
@@ -208,7 +185,7 @@ export class OpencodeNotices {
     this.version = version;
     this.log = log;
     if (version.state === 'unreadable') {
-      this.log(`mirador: ${unreadableText(version)}; opencode agents start with Mirador's bridge as before, which needs opencode ${OPENCODE_BRIDGE_VERSION} or newer`);
+      this.log(`mirador: ${unreadableOpencodeText(version)}`);
     }
   }
 
