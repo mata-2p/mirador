@@ -112,7 +112,7 @@ async function stop(): Promise<void> {
   await exited;
 }
 
-// The fake opencode: an opencode 2 to the server's `--version` (it reads it once at start), otherwise it
+// The fake opencode: an opencode 2 to the server's `--version` (read once, at the first opencode open), otherwise it
 // records its argv and OPENCODE_CONFIG_CONTENT, and with --standalone loads each
 // configured plugin directory's index.js as opencode 2 does, giving its setup an event stream fed from
 // `$HOME/do-<pane>`.

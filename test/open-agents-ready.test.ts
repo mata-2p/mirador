@@ -133,3 +133,34 @@ test('a restore asked for once the shutdown began does nothing: no previous agen
   assert.equal(await readFile(file, 'utf8'), before, 'the records file is left as it was');
   assert.deepEqual(store.sleeping(), [], 'no record became a sleeping one');
 });
+
+test('a wake that waits takes its launch run only once ready, under the run id it answered; one that may start now takes it at once', async () => {
+  const { file, owner, log } = await place([{ rel: 'oc', agent: 'opencode', lastState: 'finished' }, { rel: 'a', lastState: 'finished' }]);
+  const registry = setup();
+  const store = await OpenAgents.load(file, { owner, log });
+  store.track(registry);
+  const { ready, open } = opencodeGate();
+  // A gate that records the runs taken; each grants every start.
+  const runs: Array<{ id?: string; kind?: string }> = [];
+  const gate = {
+    run: (options: { id?: string; kind?: string }) => {
+      runs.push(options);
+      return { id: options.id ?? `run-${runs.length}`, next: async () => 'go' as const, skip() {}, fail() {}, end() {} };
+    },
+  } as unknown as NonNullable<RestoreOptions['gate']>;
+  await store.restore({ registry, resolveFolder, sessionArgs: () => [], agentLaunch, ready, gate, sleep: async () => undefined });
+  const gentle = store.wake({ id: 'old-1' });
+  assert.equal(runs.length, 1, 'a wake that may start now takes its run at once');
+  assert.equal(gentle?.runId, 'run-1');
+  await gentle?.done;
+  const woken = store.wake({ id: 'old-0' });
+  assert.equal(typeof woken?.runId, 'string');
+  await tick();
+  assert.equal(runs.length, 1, 'no launch run while the opencode wake waits');
+  assert.deepEqual(store.sleeping(), [], 'the record being woken is not listed');
+  open();
+  assert.deepEqual(await woken?.done, { restored: 1, dropped: 0 });
+  assert.deepEqual(runs.map((run) => [run.id, run.kind]), [[undefined, 'wake'], [woken?.runId, 'wake']]);
+  assert.deepEqual(registry.list().map((t) => t.rel), ['a', 'oc']);
+  await store.flush();
+});

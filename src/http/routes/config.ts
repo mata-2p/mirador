@@ -17,13 +17,13 @@ export function createConfigRoutes(options: { env?: NodeJS.ProcessEnv } = {}): R
     },
     {
       // The agents a folder can open, read from gentle-ai's state and PATH per request; an opencode older
-      // than 2.0.0 is offered with no attention and no resume, as it starts without its bridge. So it waits for the
-      // `opencode --version` the server reads at start (ctx.opencodeVersion), the whole list: a few hundred ms after
-      // start, OPENCODE_VERSION_TIMEOUT_MS at most, and no wait once it is known or with no opencode found.
+      // than 2.0.0 is offered with no attention and no resume, as it starts without its bridge. It answers at once
+      // with what the server knows (ctx.opencodeVersion) and never runs opencode: until the first opencode terminal
+      // needed the version, opencode is offered with its bridge, as for a version that could not be read.
       method: 'GET',
       path: '/api/agents',
       handler: async ({ res }) =>
-        sendJson(res, 200, { agents: await offeredAgents({ agentCommand: ctx.config.agentCommand, withoutBridge: withoutBridge(await ctx.opencodeVersion) }) }),
+        sendJson(res, 200, { agents: await offeredAgents({ agentCommand: ctx.config.agentCommand, withoutBridge: withoutBridge(ctx.opencodeVersion?.()) }) }),
     },
   ];
 }

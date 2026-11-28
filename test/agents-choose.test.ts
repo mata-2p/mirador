@@ -93,7 +93,7 @@ before(async () => {
   await mkdir(join(scratch, 'bin'), { recursive: true });
   // Stand-ins: each records its own name and arguments, then idles. kimi is in the catalog but not installed.
   // The args file is written aside and renamed into place, so started() never reads half of one.
-  // opencode answers the server's `--version` (read once at start) as an opencode 2, which gets its bridge.
+  // opencode answers the server's `--version` (read once, at the first opencode open) as an opencode 2, which gets its bridge.
   for (const program of ['gentle-shell', 'claude', 'opencode', 'kimi']) {
     await writeFile(join(scratch, 'bin', program), [
       '#!/bin/sh',

@@ -15,7 +15,8 @@ import { agentFor, whichOnPath } from './catalog.ts';
 export const OPENCODE_BRIDGE_VERSION = '2.0.0';
 /**
  * How long `opencode --version` may take: opencode 1.19.6 answers in about 0.6 s here, but a `pnpm dlx` wrapper
- * on a cold cache downloads opencode first. Past it the version
+ * on a cold cache downloads opencode first (so the server reads it only when an opencode agent needs it, never at
+ * start). Past it the version
  * is unreadable, which keeps the bridge. Tests pass a shorter `timeoutMs`.
  */
 export const OPENCODE_VERSION_TIMEOUT_MS = 15_000;
@@ -111,7 +112,7 @@ export interface OpencodeLookup {
 /**
  * The opencode an agent terminal runs: the configured `agentCommand`'s program when that starts opencode by path
  * (`~/` is HOME, as bash expands it), else the `opencode` on Mirador's own PATH (`env.PATH`). A ~/.bashrc that puts
- * another opencode first is not followed: running it at every start costs more than it gives (docs/extending.md
+ * another opencode first is not followed: running it for one version read costs more than it gives (docs/extending.md
  * says to configure `agentCommand` with the full path then). A relative path is a string: each folder resolves it.
  */
 async function locateOpencode(env: NodeJS.ProcessEnv, lookup: OpencodeLookup): Promise<{ file: string | null; relative?: string }> {
@@ -174,7 +175,7 @@ export function opencodeDoctorNote(version: OpencodeVersion): { status: 'ok' | '
 /**
  * The server's log lines about the opencode it found, each written at most once per server run: `start`, the first
  * opencode agent started without the bridge; `resume`, the first opencode session it does not resume; and,
- * once at start, a version it could not read.
+ * once the server read it (the first time an opencode agent needed it), a version it could not read.
  */
 export class OpencodeNotices {
   private readonly said = new Set<string>();

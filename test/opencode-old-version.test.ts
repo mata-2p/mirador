@@ -1,11 +1,12 @@
 // An opencode older than 2.0.0 (opencode 1.x has no `--standalone` and another plugin API, #124) starts
 // without Mirador's bridge, like Codex: no `--standalone`, no OPENCODE_CONFIG_CONTENT, no `--session` on a
-// restore or wake, so no attention, no resume and no idle sleep. The server reads `opencode --version` once
-// when it starts, from the opencode agent terminals run (the configured path, else the `opencode` on the server's
-// own PATH; ~/.bashrc is never run for it), says in one log line per launch kind which opencode and version it found
-// and which one is needed, and GET /api/agents offers it with no attention and no resume. A version it cannot read
-// keeps the bridge, with one log line. Only opencode terminals (opened, batch, restored, woken) and GET /api/agents
-// wait for the version; every other terminal starts at once. The real server runs with a
+// restore or wake, so no attention, no resume and no idle sleep. The server reads `opencode --version` once per
+// server life, never at start: the first time an opencode terminal is about to start (opened, batch, restored, woken),
+// from the opencode agent terminals run (the configured path, else the `opencode` on the server's own PATH; ~/.bashrc
+// is never run for it), says in one log line per launch kind which opencode and version it found and which one is
+// needed, and GET /api/agents then offers it with no attention and no resume (before the read, with the bridge). A
+// version it cannot read keeps the bridge, with one log line. Only opencode terminals wait for the version; every
+// other terminal, and GET /api/agents, goes on at once. The real server runs with a
 // scratch HOME, runtime, state and config dir and a PATH of stand-ins: the fake `opencode` answers `--version`
 // and otherwise records its argv and OPENCODE_CONFIG_CONTENT, then idles. No real agent binary ever runs.
 import { test, after } from 'node:test';
@@ -62,7 +63,7 @@ async function waitFor<T>(check: () => Promise<T | undefined>, ms = 8000, why = 
 /** A fake opencode whose `--version` runs `version` (shell), and otherwise records how it was started and idles. */
 const fakeOpencode = (version: string) => [
   '#!/bin/sh',
-  `if [ "$1" = --version ]; then ${version}; fi`,
+  `if [ "$1" = --version ]; then printf 'run\\n' >> "$HOME/version-runs"; ${version}; fi`,
   '{ printf \'%s\\n\' "${0##*/}"; for word in "$@"; do printf \'%s\\n\' "$word"; done; printf \'config=%s\\n\' "${OPENCODE_CONFIG_CONTENT-<unset>}"; } > "$HOME/args-$HERDR_PANE_ID.tmp"',
   '/bin/mv -f "$HOME/args-$HERDR_PANE_ID.tmp" "$HOME/args-$HERDR_PANE_ID"',
   'exec /bin/sleep 600',
@@ -160,9 +161,9 @@ const restoreDone = (m: Mirador) => waitFor(async () => (/^mirador: reopened \d+
 test('an opencode older than 2.0.0, chosen beside another agent, starts without --standalone or its plugin, offered with no attention or resume, and the log names both versions once', async () => {
   const m = await start(await place('chosen', 'echo 1.19.6; exit 0'));
   try {
+    const alpha = await open(m, 'alpha', 'opencode');
     const agents = ((await (await m.api('GET', '/api/agents')).json()) as { agents: Array<{ id: string; attention: string; resume: boolean }> }).agents;
     assert.deepEqual(agents.find((agent) => agent.id === 'opencode'), { id: 'opencode', label: 'opencode', command: 'opencode', configured: false, attention: 'none', resume: false });
-    const alpha = await open(m, 'alpha', 'opencode');
     assert.deepEqual(await started(m, alpha.id), { argv: ['opencode'], config: '<unset>' });
     const beta = await open(m, 'beta', 'opencode');
     assert.deepEqual(await started(m, beta.id), { argv: ['opencode'], config: '<unset>' });
@@ -176,8 +177,8 @@ test('an opencode older than 2.0.0, chosen beside another agent, starts without 
 test('a configured opencode older than 2.0.0 starts exactly as configured, without --standalone or its plugin, offered with no attention or resume', async () => {
   const m = await start(await place('configured', 'echo 1.19.6; exit 0', { agentCommand: 'opencode' }));
   try {
-    assert.deepEqual((await offered(m))[0], { id: 'opencode', label: 'opencode', command: 'opencode', configured: true, attention: 'none', resume: false });
     const alpha = await open(m, 'alpha');
+    assert.deepEqual((await offered(m))[0], { id: 'opencode', label: 'opencode', command: 'opencode', configured: true, attention: 'none', resume: false });
     assert.deepEqual(await started(m, alpha.id), { argv: ['opencode'], config: '<unset>' });
     assert.equal(count(m.output(), OLD_START(join(m.scratch, 'bin', 'opencode'))), 1, m.output());
   } finally {
@@ -243,10 +244,10 @@ test('a 0.0.0-… development build of opencode keeps the bridge, with one log l
 test('Mirador reads the opencode on its own PATH, never running ~/.bashrc for it: a 2.x that ~/.bashrc puts first does not count', async () => {
   const m = await start(await place('own-path', 'echo 1.19.6; exit 0', {}, 'echo 2.1.0; exit 0'));
   try {
-    // GET /api/agents answers once the version is known: an old opencode, the server's.
-    assert.deepEqual((await offered(m)).find((agent) => agent.id === 'opencode'), { id: 'opencode', label: 'opencode', command: 'opencode', configured: false, attention: 'none', resume: false });
-    await assert.rejects(access(join(m.scratch, 'home', 'bashrc-ran')), { code: 'ENOENT' }, 'no ~/.bashrc ran before any terminal opened');
+    // The first opencode open reads the version; ~/.bashrc runs only in that terminal's bash, after the read.
     const alpha = await open(m, 'alpha', 'opencode');
+    // GET /api/agents reports the version read: an old opencode, the server's.
+    assert.deepEqual((await offered(m)).find((agent) => agent.id === 'opencode'), { id: 'opencode', label: 'opencode', command: 'opencode', configured: false, attention: 'none', resume: false });
     assert.deepEqual(await started(m, alpha.id), { argv: ['opencode'], config: '<unset>' });
     assert.equal(count(m.output(), OLD_START(join(m.scratch, 'bin', 'opencode'))), 1, m.output());
   } finally {
@@ -263,8 +264,8 @@ test('a configured agentCommand naming an old opencode by path is the one read, 
   await writeFile(config, JSON.stringify({ ...JSON.parse(await readFile(config, 'utf8')), agentCommand: old }));
   const m = await start(scratch);
   try {
-    assert.deepEqual((await offered(m))[0], { id: 'opencode', label: 'opencode', command: old, configured: true, attention: 'none', resume: false });
     const alpha = await open(m, 'alpha');
+    assert.deepEqual((await offered(m))[0], { id: 'opencode', label: 'opencode', command: old, configured: true, attention: 'none', resume: false });
     assert.deepEqual(await started(m, alpha.id), { argv: ['opencode'], config: '<unset>' });
     assert.equal(count(m.output(), OLD_START(old)), 1, m.output());
   } finally {
@@ -280,9 +281,9 @@ const release = (m: Mirador) => writeFile(join(m.scratch, 'home', 'release'), ''
 test('a terminal opened while a slow `opencode --version` is pending waits for it, then gets the bridge', async () => {
   const m = await start(await place('slow-open', SLOW));
   try {
-    await versionBegan(m);
     let answered = false;
     const opening = open(m, 'alpha', 'opencode').finally(() => (answered = true));
+    await versionBegan(m);
     await new Promise((resolve) => setTimeout(resolve, 400));
     assert.equal(answered, false, 'POST /api/terminals waits for the version');
     assert.deepEqual(await (await m.api('GET', '/api/terminals')).json(), [], 'no terminal before the version');
@@ -295,12 +296,11 @@ test('a terminal opened while a slow `opencode --version` is pending waits for i
   }
 });
 
-test('while a slow `opencode --version` is pending, a shell terminal and a non-opencode agent open at once; GET /api/agents waits for it', async () => {
+test('while a slow `opencode --version` is pending, a shell terminal and a non-opencode agent open at once, and GET /api/agents answers at once', async () => {
   const m = await start(await place('slow-others', SLOW));
   try {
+    const opening = open(m, 'gamma', 'opencode');
     await versionBegan(m);
-    let listed = false;
-    const listing = offered(m).finally(() => (listed = true));
     const began = Date.now();
     const shell = await m.api('POST', '/api/terminals', { ws: 'dev', rel: 'alpha', kind: 'shell', cols: 90, rows: 33 });
     assert.equal(shell.status, 201, await shell.clone().text());
@@ -309,9 +309,10 @@ test('while a slow `opencode --version` is pending, a shell terminal and a non-o
     await assert.rejects(access(join(m.scratch, 'home', 'release')), { code: 'ENOENT' }, 'the version is still pending');
     assert.deepEqual(((await (await m.api('GET', '/api/terminals')).json()) as Info[]).map((info) => info.rel).sort(), ['alpha', 'beta']);
     assert.equal(agent.agent, undefined, 'the configured gentle-shell');
-    assert.equal(listed, false, 'GET /api/agents waits for the version');
+    assert.deepEqual((await offered(m)).find((offer) => offer.id === 'opencode'), { id: 'opencode', label: 'opencode', command: 'opencode', configured: false, attention: 'hooks', resume: true });
+    assert.ok(Date.now() - began < 2000, `GET /api/agents answered ${Date.now() - began} ms after the opens began`);
     await release(m);
-    assert.deepEqual((await listing).find((offer) => offer.id === 'opencode'), { id: 'opencode', label: 'opencode', command: 'opencode', configured: false, attention: 'hooks', resume: true });
+    assert.equal((await started(m, (await opening).id)).argv[1], '--standalone');
   } finally {
     await m.stop();
   }
@@ -320,9 +321,9 @@ test('while a slow `opencode --version` is pending, a shell terminal and a non-o
 test('a batch of the configured opencode waits for a slow `opencode --version`, then opens with the bridge', async () => {
   const m = await start(await place('slow-batch', SLOW, { agentCommand: 'opencode' }));
   try {
-    await versionBegan(m);
     let answered = false;
     const batch = m.api('POST', '/api/terminals/batch', { ws: 'dev', rels: ['alpha'], cols: 90, rows: 33 }).finally(() => (answered = true));
+    await versionBegan(m);
     await new Promise((resolve) => setTimeout(resolve, 400));
     assert.equal(answered, false, 'the batch waits for the version');
     assert.deepEqual(await (await m.api('GET', '/api/terminals')).json(), []);
@@ -369,6 +370,8 @@ test('the restore opens other agents at once and waits for a slow `opencode --ve
 test('a server stopped while `opencode --version` is pending ends it and its children, so nothing outlives the server', async () => {
   const hang = '/bin/sleep 60 & echo $! > "$HOME/version-child.tmp"; /bin/mv "$HOME/version-child.tmp" "$HOME/version-child"; wait';
   const m = await start(await place('stop-pending', hang));
+  // An opencode open begins the read; its answer does not matter once the server stops.
+  void m.api('POST', '/api/terminals', { ws: 'dev', rel: 'alpha', kind: 'agent', agent: 'opencode', cols: 90, rows: 33 }).catch(() => undefined);
   const pidFile = join(m.scratch, 'home', 'version-child');
   const child = await waitFor(async () => {
     const text = await readFile(pidFile, 'utf8');
@@ -405,10 +408,10 @@ test('an opencode open sent while a slow `opencode --version` is pending is refu
 
 test('an opencode open or batch waiting for a slow `opencode --version` when the server\'s stop begins starts no terminal', async () => {
   const m = await start(await place('slow-stop', SLOW, { agentCommand: 'opencode' }));
-  await versionBegan(m);
   const answer = (request: Promise<Response>) => request.then(async (response) => ({ status: response.status, body: await response.json() }), () => 'connection closed');
   const opening = answer(m.api('POST', '/api/terminals', { ws: 'dev', rel: 'alpha', kind: 'agent', cols: 90, rows: 33 }));
   const batch = answer(m.api('POST', '/api/terminals/batch', { ws: 'dev', rels: ['beta'], cols: 90, rows: 33 }));
+  await versionBegan(m);
   await new Promise((resolve) => setTimeout(resolve, 400));
   await m.stop();
   const stopped = { status: 503, body: { error: 'Mirador is stopping; open this agent once it has started again', code: 'server_stopping' } };
@@ -417,4 +420,107 @@ test('an opencode open or batch waiting for a slow `opencode --version` when the
   }
   const { readdir } = await import('node:fs/promises');
   assert.deepEqual((await readdir(join(m.scratch, 'home'))).filter((name) => name.startsWith('args-')), [], 'no opencode started');
+});
+
+// The version is read lazily (#124): the first time an action of the owner needs it (opening, waking or restoring an
+// opencode agent, or `mirador doctor`), once per server life, never at start. The fake opencode appends one line to
+// `$HOME/version-runs` per `--version`.
+const versionRuns = async (m: Mirador) => (await readFile(join(m.scratch, 'home', 'version-runs'), 'utf8').catch(() => '')).split('\n').filter(Boolean).length;
+const settle = (ms = 800) => new Promise((resolve) => setTimeout(resolve, ms));
+const opencodeOffer = async (m: Mirador) => (await offered(m)).find((agent) => agent.id === 'opencode');
+const BRIDGED = { id: 'opencode', label: 'opencode', command: 'opencode', configured: false, attention: 'hooks', resume: true };
+const BRIDGELESS = { ...BRIDGED, attention: 'none', resume: false };
+
+test('a server with no opencode agent to open never runs `opencode --version`, and GET /api/agents answers at once without running it', async () => {
+  // `--version` would take 5 s: an answer well below that did not wait for it.
+  const m = await start(await place('lazy-start', '/bin/sleep 5; echo 1.19.6; exit 0'));
+  try {
+    await settle();
+    assert.equal(await versionRuns(m), 0, `the start ran opencode; server output:\n${m.output()}`);
+    const began = Date.now();
+    const offer = await opencodeOffer(m);
+    const took = Date.now() - began;
+    assert.ok(took < 1500, `GET /api/agents took ${took} ms`);
+    assert.deepEqual(offer, BRIDGED, 'before the version is known: the bridge, as for a version not read');
+    await settle(300);
+    assert.equal(await versionRuns(m), 0, 'GET /api/agents started no read');
+  } finally {
+    await m.stop();
+  }
+});
+
+test('the first opencode open runs `opencode --version` once, two concurrent opens share that run, and GET /api/agents then reports what it read', async () => {
+  const m = await start(await place('lazy-open', 'echo 1.19.6; exit 0'));
+  try {
+    await settle();
+    assert.equal(await versionRuns(m), 0, 'nothing ran before the first open');
+    const [alpha, beta] = await Promise.all([open(m, 'alpha', 'opencode'), open(m, 'beta', 'opencode')]);
+    assert.equal(await versionRuns(m), 1, 'two concurrent opens ran it once');
+    assert.deepEqual((await started(m, alpha.id)).argv, ['opencode']);
+    assert.deepEqual((await started(m, beta.id)).argv, ['opencode']);
+    await open(m, 'gamma', 'opencode');
+    assert.equal(await versionRuns(m), 1, 'once per server life');
+    assert.deepEqual(await opencodeOffer(m), BRIDGELESS, 'once known: the version read');
+  } finally {
+    await m.stop();
+  }
+});
+
+test('the startup restore runs `opencode --version` only when it has opencode records to reopen', async () => {
+  const record = (scratch: string, id: string, rel: string, extra: object) => ({ id, workspaceId: 'dev', rel, cwd: join(scratch, 'root', rel), cols: 90, rows: 33, sessionFile: null, createdAt: '2026-11-20T00:00:00.000Z', ...extra });
+  const withRecords = async (name: string, agents: (scratch: string) => object[]) => {
+    const scratch = await place(name, 'echo 2.1.0; exit 0');
+    await mkdir(join(scratch, 'state', 'mirador'), { recursive: true });
+    await writeFile(join(scratch, 'state', 'mirador', 'open-agents.json'), JSON.stringify({ owner: join(scratch, 'cfg', 'mirador', 'config.json'), agents: agents(scratch) }), { mode: 0o600 });
+    return scratch;
+  };
+  // A gentle-shell record reopened, and an opencode one that had finished its turn: it sleeps, nothing reopens it.
+  const none = await start(await withRecords('restore-none', (s) => [record(s, 'r-gentle', 'alpha', { lastState: 'working' }), record(s, 'r-finished', 'delta', { agent: 'opencode', session: S2, lastState: 'finished' })]));
+  try {
+    await restoreDone(none);
+    await settle();
+    assert.equal(await versionRuns(none), 0, `no opencode record to reopen; server output:\n${none.output()}`);
+  } finally {
+    await none.stop();
+  }
+  const some = await start(await withRecords('restore-some', (s) => [record(s, 'r-working', 'gamma', { agent: 'opencode', session: S1, lastState: 'working' })]));
+  try {
+    await restoreDone(some);
+    assert.equal(await versionRuns(some), 1, 'the opencode record needed it');
+    const gamma = await waitFor(async () => ((await (await some.api('GET', '/api/terminals')).json()) as Info[]).find((info) => info.rel === 'gamma'));
+    assert.deepEqual((await started(some, gamma.id)).argv, ['opencode', '--standalone', '--session', S1]);
+  } finally {
+    await some.stop();
+  }
+});
+
+test('while a wake of an opencode record waits for a slow `opencode --version`, an agent and a shell opened by hand get 201 at once; an opencode open waiting with it is refused once the wake opens', async () => {
+  const scratch = await place('wake-no-409', SLOW);
+  await mkdir(join(scratch, 'state', 'mirador'), { recursive: true });
+  await writeFile(join(scratch, 'state', 'mirador', 'open-agents.json'), JSON.stringify({
+    owner: join(scratch, 'cfg', 'mirador', 'config.json'),
+    agents: [{ id: 'r-finished', workspaceId: 'dev', rel: 'delta', cwd: join(scratch, 'root', 'delta'), cols: 90, rows: 33, sessionFile: null, createdAt: '2026-11-20T00:00:00.000Z', agent: 'opencode', session: S2, lastState: 'finished' }],
+  }), { mode: 0o600 });
+  const m = await start(scratch);
+  try {
+    await waitFor(async () => (((await (await m.api('GET', '/api/terminals/sleeping')).json()) as { agents: Array<{ id: string }> }).agents.some((a) => a.id === 'r-finished') ? true : undefined));
+    assert.equal((await m.api('POST', '/api/terminals/sleeping/r-finished/wake')).status, 202);
+    await versionBegan(m);
+    const opencode = m.api('POST', '/api/terminals', { ws: 'dev', rel: 'gamma', kind: 'agent', agent: 'opencode', cols: 90, rows: 33 });
+    const began = Date.now();
+    const agent = await m.api('POST', '/api/terminals', { ws: 'dev', rel: 'alpha', kind: 'agent', cols: 90, rows: 33 });
+    assert.equal(agent.status, 201, await agent.clone().text());
+    const shell = await m.api('POST', '/api/terminals', { ws: 'dev', rel: 'beta', kind: 'shell', cols: 90, rows: 33 });
+    assert.equal(shell.status, 201, await shell.clone().text());
+    assert.ok(Date.now() - began < 2000, `opened in ${Date.now() - began} ms`);
+    assert.equal(((await (await m.api('GET', '/api/terminals/launches')).json()) as { active: boolean }).active, false, 'no launch run while the wake waits');
+    await assert.rejects(access(join(m.scratch, 'home', 'release')), { code: 'ENOENT' }, 'the version is still pending');
+    await release(m);
+    const refused = await opencode;
+    assert.deepEqual([refused.status, await refused.json()], [409, { error: 'Mirador is opening agents; open this one once they are open, or after Pausar', code: 'launches_running' }]);
+    const delta = await waitFor(async () => ((await (await m.api('GET', '/api/terminals')).json()) as Info[]).find((info) => info.rel === 'delta'), 15_000);
+    assert.deepEqual((await started(m, delta.id)).argv, ['opencode', '--standalone', '--session', S2]);
+  } finally {
+    await m.stop();
+  }
 });

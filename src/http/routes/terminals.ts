@@ -157,8 +157,9 @@ export const terminalRoutes: RouteModule = (ctx) => {
         const agent = await chosenAgent(body, kind, ctx.config.agentCommand);
         if (kind === 'agent') refuseWhileLaunching();
         const folder = await ctx.resolveFolder(body.ws, body.rel);
-        // An opencode agent (chosen, or the configured agentCommand) waits for its version and bridge; any other
-        // terminal starts at once (ctx.opencodeReady). After that wait it asks again: the restore's run for opencode
+        // An opencode agent (chosen, or the configured agentCommand) waits for its version and bridge (the first one
+        // begins the read); any other terminal starts at once (ctx.opencodeReady). No launch run waits for the version,
+        // so this wait never refuses another open. After it, it asks again: the restore's or a wake's run for opencode
         // records may have begun meanwhile, or the server's stop.
         const ready = kind === 'agent' ? ctx.opencodeReady?.(agent?.agent) : null;
         if (ready) {
@@ -191,8 +192,8 @@ export const terminalRoutes: RouteModule = (ctx) => {
         const { workspace } = await ctx.resolveFolder(body.ws, '');
         const rels = asked === 'saved' ? (workspace.projects ?? []) : asked;
         if (!rels.length) throw new HttpError(400, 'this workspace has no saved projects', 'workspace_projects_empty');
-        // A batch opens the configured agentCommand: when that is opencode, it waits for its version and bridge, and
-        // opens nothing once the server's stop began meanwhile.
+        // A batch opens the configured agentCommand: when that is opencode, it waits for its version and bridge before
+        // it takes its launch run, and opens nothing once the server's stop began meanwhile.
         const ready = ctx.opencodeReady?.();
         if (ready) {
           await ready;
