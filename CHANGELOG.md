@@ -54,7 +54,9 @@ All notable changes to Mirador, written for the people who run it. The format fo
   full path); the log and doctor name that file. The last `x.y.z` opencode prints counts, and a pre-release counts
   by its `x.y.z`. A version that cannot be read (no answer within 15 s, a `0.0.0-…` development build) keeps the
   bridge, as before, with one log line. Only opencode terminals wait for the version at start (and the agent list);
-  shells and other agents open at once. Restart Mirador after updating opencode.
+  shells and other agents open at once. An opencode opened by hand during that wait is refused, as before, if the
+  restore is opening agents by then, and one waiting when Mirador stops opens nothing. Restart Mirador after
+  updating opencode.
 
 ## [0.2.0] - 2026-11-26
 

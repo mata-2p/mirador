@@ -42,6 +42,8 @@ export interface AppContext {
    * when it may start now. Absent in tests.
    */
   opencodeReady?(agent?: string | null): Promise<void> | null;
+  /** True once the server's stop began (SIGINT/SIGTERM): a request that waited starts nothing more. Absent in tests. */
+  stopping?(): boolean;
 }
 
 /** A feature's server half: it receives the shared context and returns its routes. */

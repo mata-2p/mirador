@@ -128,14 +128,15 @@ test('readOpencodeVersion runs the program itself with --version, no shell, and 
   assert.deepEqual(await readOpencodeVersion({ PATH: args }), { state: 'ok', version: '2.1.0', file: join(args, 'opencode') });
   assert.equal(await readFile(join(marks, 'argv'), 'utf8'), '--version\n');
 
-  // The child writes its pid first thing; the test waits for that file while the read is still pending (the
-  // limit is far longer than that takes), so the kill always finds a child to end.
+  // The child writes its pid first thing; the test waits for that file while the read is still pending: the read's
+  // limit (4000 ms) is clearly longer than the pid wait (1500 ms), so a loaded runner still sees the child before the
+  // kill, and the kill always finds a child to end.
   const hang = await withOpencode(`/bin/sleep 30 & echo $! > ${marks}/child.tmp; /bin/mv ${marks}/child.tmp ${marks}/child; wait`);
   const began = Date.now();
-  const reading = readOpencodeVersion({ PATH: hang }, { timeoutMs: 1500 });
+  const reading = readOpencodeVersion({ PATH: hang }, { timeoutMs: 4000 });
   const child = Number((await waitForFile(join(marks, 'child'), 1500)).trim());
-  assert.deepEqual(await reading, { state: 'unreadable', reason: 'opencode --version did not answer within 1500 ms', file: join(hang, 'opencode') });
-  assert.ok(Date.now() - began < 5000, `gave up in ${Date.now() - began} ms`);
+  assert.deepEqual(await reading, { state: 'unreadable', reason: 'opencode --version did not answer within 4000 ms', file: join(hang, 'opencode') });
+  assert.ok(Date.now() - began < 8000, `gave up in ${Date.now() - began} ms`);
   const alive = () => { try { process.kill(child, 0); return true; } catch { return false; } };
   for (let i = 0; i < 40 && alive(); i++) await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(alive(), false, 'its child was ended too');

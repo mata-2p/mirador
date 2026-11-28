@@ -382,3 +382,39 @@ test('a server stopped while `opencode --version` is pending ends it and its chi
   if (left) process.kill(child, 'SIGKILL');
   assert.equal(left, false, 'the pending `opencode --version` ended with the server');
 });
+
+test('an opencode open sent while a slow `opencode --version` is pending is refused with 409 once the restore\'s second launch run for opencode records is active', async () => {
+  const scratch = await place('slow-open-restore', SLOW);
+  const record = (id: string, rel: string) => ({ id, workspaceId: 'dev', rel, cwd: join(scratch, 'root', rel), cols: 90, rows: 33, sessionFile: null, createdAt: '2026-11-20T00:00:00.000Z', agent: 'opencode', session: S1, lastState: 'working' });
+  await mkdir(join(scratch, 'state', 'mirador'), { recursive: true });
+  await writeFile(join(scratch, 'state', 'mirador', 'open-agents.json'), JSON.stringify({ owner: join(scratch, 'cfg', 'mirador', 'config.json'), agents: [record('r-gamma', 'gamma')] }), { mode: 0o600 });
+  const m = await start(scratch);
+  try {
+    await versionBegan(m);
+    const opening = m.api('POST', '/api/terminals', { ws: 'dev', rel: 'alpha', kind: 'agent', agent: 'opencode', cols: 90, rows: 33 });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await release(m);
+    const response = await opening;
+    assert.deepEqual([response.status, await response.json()], [409, { error: 'Mirador is opening agents; open this one once they are open, or after Pausar', code: 'launches_running' }]);
+    await restoreDone(m);
+    assert.deepEqual(((await (await m.api('GET', '/api/terminals')).json()) as Info[]).map((info) => info.rel), ['gamma'], 'only the restored record opened');
+  } finally {
+    await m.stop();
+  }
+});
+
+test('an opencode open or batch waiting for a slow `opencode --version` when the server\'s stop begins starts no terminal', async () => {
+  const m = await start(await place('slow-stop', SLOW, { agentCommand: 'opencode' }));
+  await versionBegan(m);
+  const answer = (request: Promise<Response>) => request.then(async (response) => ({ status: response.status, body: await response.json() }), () => 'connection closed');
+  const opening = answer(m.api('POST', '/api/terminals', { ws: 'dev', rel: 'alpha', kind: 'agent', cols: 90, rows: 33 }));
+  const batch = answer(m.api('POST', '/api/terminals/batch', { ws: 'dev', rels: ['beta'], cols: 90, rows: 33 }));
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  await m.stop();
+  const stopped = { status: 503, body: { error: 'Mirador is stopping; open this agent once it has started again', code: 'server_stopping' } };
+  for (const [what, got] of [['open', await opening], ['batch', await batch]] as const) {
+    assert.ok(got === 'connection closed' || JSON.stringify(got) === JSON.stringify(stopped), `${what}: ${JSON.stringify(got)}; server output:\n${m.output()}`);
+  }
+  const { readdir } = await import('node:fs/promises');
+  assert.deepEqual((await readdir(join(m.scratch, 'home'))).filter((name) => name.startsWith('args-')), [], 'no opencode started');
+});

@@ -271,6 +271,10 @@ async function main(): Promise<void> {
   // that work when it runs opencode and it is not done yet, else null (it starts at once).
   const opencodeReady = (agent?: string | null): Promise<void> | null =>
     !opencodeDone && terminalAgent(agent, config.agentCommand)?.id === 'opencode' ? opencodeReadyWork : null;
+  // The requests' wait ends one turn of the event loop after the restore's: by then the restore's run for opencode
+  // records is in the launch gate, so an open asking it again after the wait (src/http/routes/terminals.ts) sees it.
+  const requestOpencodeReady = (agent?: string | null): Promise<void> | null =>
+    opencodeReady(agent)?.then(() => new Promise<void>((resolve) => setImmediate(resolve))) ?? null;
   terminals.subscribe((event) => {
     if (event.type === 'created' && event.info.kind === 'agent' && terminalAgent(event.info.agent, config.agentCommand)?.id === 'opencode') {
       void opencode.then(({ notices }) => notices.started());
@@ -337,6 +341,8 @@ async function main(): Promise<void> {
     problems: workspaceProblems,
   });
   const shutdownHooks: ShutdownHook[] = [];
+  // True once the shutdown began (below).
+  let stopping = false;
   const ctx: AppContext = {
     config: settings,
     workspaces,
@@ -348,7 +354,8 @@ async function main(): Promise<void> {
     onShutdown: (fn) => shutdownHooks.push(fn),
     opencodeVersion: opencode.then(({ version }) => version),
     beforeOpencode: (work) => void beforeOpencode.push(work),
-    opencodeReady,
+    opencodeReady: requestOpencodeReady,
+    stopping: () => stopping,
   };
   ctx.onShutdown(() => bundle.dispose());
   ctx.onShutdown(() => stopReadingOpencode.abort());
@@ -515,7 +522,6 @@ async function main(): Promise<void> {
   }
 
   const statePath = join(runDir, 'state.json');
-  let stopping = false;
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
