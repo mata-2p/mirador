@@ -115,6 +115,17 @@ export const terminalRoutes: RouteModule = (ctx) => {
   };
   // Batches answered while their agents still wait for the launch gate (src/system/memory-gate.ts).
   const batches = new Map<string, TrackedBatch>();
+  // While agents open in batches, one more by hand is refused rather than queued behind
+  // them (the window disables the button and says why); bash never waits.
+  const refuseWhileLaunching = () => {
+    if (launchGate(ctx.terminals)?.status().active) {
+      throw new HttpError(409, 'Mirador is opening agents; open this one once they are open, or after Pausar', 'launches_running');
+    }
+  };
+  // An open that waited for opencode's version while the server began to stop starts nothing.
+  const refuseWhileStopping = () => {
+    if (ctx.stopping?.()) throw new HttpError(503, 'Mirador is stopping; open this agent once it has started again', 'server_stopping');
+  };
   const prune = () => {
     for (const [id, batch] of batches) if (batch.done && Date.now() - batch.finishedAt > BATCH_KEEP_MS) batches.delete(id);
     for (const [id, batch] of batches) if (batches.size >= MAX_BATCHES && batch.done) batches.delete(id);
@@ -144,12 +155,18 @@ export const terminalRoutes: RouteModule = (ctx) => {
         const body = await readJson(req);
         const kind: TerminalKind = body.kind === 'shell' || body.kind === 'git' ? body.kind : 'agent';
         const agent = await chosenAgent(body, kind, ctx.config.agentCommand);
-        // While agents open in batches, one more by hand is refused rather than queued behind
-        // them (the window disables the button and says why); bash never waits.
-        if (kind === 'agent' && launchGate(ctx.terminals)?.status().active) {
-          throw new HttpError(409, 'Mirador is opening agents; open this one once they are open, or after Pausar', 'launches_running');
-        }
+        if (kind === 'agent') refuseWhileLaunching();
         const folder = await ctx.resolveFolder(body.ws, body.rel);
+        // An opencode agent (chosen, or the configured agentCommand) waits for its version and bridge (the first one
+        // begins the read); any other terminal starts at once (ctx.opencodeReady). No launch run waits for the version,
+        // so this wait never refuses another open. After it, it asks again: the restore's or a wake's run for opencode
+        // records may have begun meanwhile, or the server's stop.
+        const ready = kind === 'agent' ? ctx.opencodeReady?.(agent?.agent) : null;
+        if (ready) {
+          await ready;
+          refuseWhileStopping();
+          refuseWhileLaunching();
+        }
         const info = ctx.terminals.create({
           cwd: folder.path,
           kind,
@@ -175,6 +192,13 @@ export const terminalRoutes: RouteModule = (ctx) => {
         const { workspace } = await ctx.resolveFolder(body.ws, '');
         const rels = asked === 'saved' ? (workspace.projects ?? []) : asked;
         if (!rels.length) throw new HttpError(400, 'this workspace has no saved projects', 'workspace_projects_empty');
+        // A batch opens the configured agentCommand: when that is opencode, it waits for its version and bridge before
+        // it takes its launch run, and opens nothing once the server's stop began meanwhile.
+        const ready = ctx.opencodeReady?.();
+        if (ready) {
+          await ready;
+          refuseWhileStopping();
+        }
         const night = delegated ? nightService(ctx.terminals) : null;
         let autopilot: AutopilotOutcome | undefined;
         // The instruction becomes the agent's first message on pi's command line, like --session at a restore (server.ts).

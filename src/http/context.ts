@@ -1,3 +1,4 @@
+import type { OpencodeVersion } from '../agents/opencode-version.ts';
 import type { MiradorConfig } from '../config.ts';
 import type { EngramClient } from '../memory/engram.ts';
 import type { TerminalRegistry } from '../terminals/registry.ts';
@@ -25,6 +26,25 @@ export interface AppContext {
   parseDate(value: string | null): string;
   /** Runs `fn` on SIGINT/SIGTERM before the process exits (close sockets, child processes). */
   onShutdown(fn: () => void | Promise<void>): void;
+  /**
+   * `opencode --version` as far as the server knows it now (src/agents/opencode-version.ts): undefined until the
+   * first opencode terminal needed it (opencodeReady). It never starts a read. An `old` one starts without its bridge
+   * and is offered with no attention or resume; undefined is offered with the bridge, as before. Absent in tests.
+   */
+  opencodeVersion?(): OpencodeVersion | undefined;
+  /**
+   * Work a route module needs done once opencode's version is read (its bridge): no opencode terminal starts before
+   * it is done (opencodeReady). Absent in tests: then the route module does it at once, for no known version.
+   */
+  whenOpencodeRead?(work: (version: OpencodeVersion) => Promise<void>): void;
+  /**
+   * What an agent terminal of catalog id `agent` (absent or null: the configured agentCommand) waits for before it
+   * starts: when it runs opencode and the version is not known yet, the read (begun by this call, once per server
+   * life) and whenOpencodeRead's work; null when it may start now. Absent in tests.
+   */
+  opencodeReady?(agent?: string | null): Promise<void> | null;
+  /** True once the server's stop began (SIGINT/SIGTERM): a request that waited starts nothing more. Absent in tests. */
+  stopping?(): boolean;
 }
 
 /** A feature's server half: it receives the shared context and returns its routes. */

@@ -42,6 +42,25 @@ All notable changes to Mirador, written for the people who run it. The format fo
   model-call hook sends it again (Claude Code's `PreToolUse` and agy's `PostToolUse`, for every tool, and
   `PostInvocation` are now hooked too), so a cut turn reads `unknown`. Waiting and finished reports never
   expire, and opencode is unchanged. Agents started after Mirador restarts get the new hooks.
+- An opencode older than 2.0.0 (opencode 1.x) no longer closes at once when Mirador opens it (Fixes #124).
+  Mirador's opencode bridge needs `--standalone` and the V2 plugin API, which opencode has from 2.0.0 on; 1.x printed
+  its help and exited. Mirador now reads `opencode --version` and starts an older opencode without
+  the bridge, like Codex: no `--standalone` and no plugin, so no state cards, no resume (a restore or wake starts a
+  fresh session, never `--session`) and no idle sleep. The log says it once per kind of launch, naming the
+  installed and the required version, `GET /api/agents` offers it with no attention and no resume, and
+  `mirador doctor` (and so `install.sh`) prints a `warn` line for it. The version read is that of the configured
+  `agentCommand` when it names opencode by its full path, else of the `opencode` on Mirador's own `PATH` (your
+  `~/.bashrc` is not run for it: if it puts a different opencode first, configure `agentCommand` with that one's
+  full path); the log and doctor name that file. The last `x.y.z` opencode prints counts, and a pre-release counts
+  by its `x.y.z`. A version that cannot be read (no answer within 15 s, a `0.0.0-…` development build) keeps the
+  bridge, as before, with one log line. Mirador never runs opencode at start (a wrapper such as
+  `pnpm dlx` may go to the network): it reads the version the first time you open, wake or restore an opencode agent
+  (once per server life), and `mirador doctor` reads it too. Only opencode terminals wait for it; shells, other
+  agents and the agent list (`GET /api/agents`, which offers opencode with its bridge until the version is known)
+  answer at once, and a wake or restore waiting for it refuses no agent opened by hand. An opencode opened by hand
+  during that wait is refused, as before, if the restore or a wake is opening agents by then, and one waiting when
+  Mirador stops opens nothing. Restart Mirador after
+  updating opencode.
 
 ## [0.2.0] - 2026-11-26
 

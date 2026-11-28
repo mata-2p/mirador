@@ -50,10 +50,11 @@ export function bridgeEnvProvider(agentCommand: string, bridges: Readonly<Record
  * argv (`--session <file>` for gentle-shell or pi, `--resume <id>` for claude, `--session <id>` for
  * opencode, `--conversation <id>` for agy). None for any other command, or for a session its agent cannot take (an id-resumed agent
  * given anything but a SESSION_ID, such as a pi session file; a file-resumed one given a SESSION_ID, not
- * a path), which then starts a fresh session.
+ * a path), which then starts a fresh session. So does an agent `withoutBridge` names by catalog id (an opencode
+ * older than 2.0.0, src/agents/opencode-version.ts): without its bridge it has no verified resume.
  */
-export function resumeArgs(agentCommand: string, session: string): string[] {
+export function resumeArgs(agentCommand: string, session: string, withoutBridge?: ReadonlySet<string>): string[] {
   const agent = agentFor(agentCommand);
-  if (!agent?.resume || (agent.resumeKey === 'id') !== SESSION_ID.test(session)) return [];
+  if (!agent?.resume || withoutBridge?.has(agent.id) || (agent.resumeKey === 'id') !== SESSION_ID.test(session)) return [];
   return agent.resume.map((word) => (word === SESSION ? session : word));
 }

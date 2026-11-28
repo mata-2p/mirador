@@ -1,6 +1,7 @@
 // Mirador's opencode plugin. Mirador copies it to
 // <runtime>/mirador/herdr/opencode-plugin/index.js and starts opencode with `--standalone` and
-// OPENCODE_CONFIG_CONTENT naming that folder (src/attention/opencode-plugin.ts), so opencode 2 loads it in
+// OPENCODE_CONFIG_CONTENT naming that folder (src/attention/opencode-plugin.ts), so opencode 2.0.0 or newer loads
+// it (an older opencode gets neither, src/agents/opencode-version.ts) in
 // that terminal's private server, which inherits the terminal's herdr variables. It follows the server's
 // events (https://opencode.ai/docs/build/plugins/server/#events) and reports the agent's attention state
 // as bin/claude-hook does, as one herdr report-metadata line to $HERDR_SOCKET_PATH for pane $HERDR_PANE_ID,

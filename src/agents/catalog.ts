@@ -80,7 +80,8 @@ export const AGENTS: readonly AgentEntry[] = [
   // opencode 2 runs plugins in its server, shared by every opencode of the user unless started with
   // `--standalone` (a private server that inherits the terminal's environment), so Mirador adds that flag and
   // names its plugin in OPENCODE_CONFIG_CONTENT (src/attention/opencode-plugin.ts). `--session <id>` continues a
-  // session (https://opencode.ai/docs/cli/, packages/cli/src/commands/commands.ts in anomalyco/opencode).
+  // session (https://opencode.ai/docs/cli/, packages/cli/src/commands/commands.ts in anomalyco/opencode). That needs
+  // opencode 2.0.0 or newer; an older one starts with neither, like Codex (src/agents/opencode-version.ts).
   {
     id: 'opencode',
     label: 'opencode',
@@ -151,21 +152,26 @@ export function agentLaunch(id: string, agentCommand: string): AgentLaunch | nul
   return entry === agentFor(agentCommand) ? { agent: id } : { agent: id, agentCommand: entry.launch.join(' ') };
 }
 
-/** Whether `program` is an executable file in one of PATH's absolute directories. */
-export async function onPath(program: string, path: string | undefined): Promise<boolean> {
+/** The first executable file `program` in PATH's absolute directories, or null. */
+export async function whichOnPath(program: string, path: string | undefined): Promise<string | null> {
   for (const dir of (path ?? '').split(':')) {
     if (!dir || !isAbsolute(dir)) continue;
     const file = join(dir, program);
     try {
       if ((await stat(file)).isFile()) {
         await access(file, constants.X_OK);
-        return true;
+        return file;
       }
     } catch {
       // Not here: try the next directory.
     }
   }
-  return false;
+  return null;
+}
+
+/** Whether `program` is an executable file in one of PATH's absolute directories. */
+export async function onPath(program: string, path: string | undefined): Promise<boolean> {
+  return (await whichOnPath(program, path)) !== null;
 }
 
 /** An agent the user can open in a folder (GET /api/agents). */
@@ -185,22 +191,25 @@ export interface OfferedAgent {
 /**
  * The configured `agentCommand` first, as today, then gentle-ai's `installed_agents` ∩ the
  * catalog ∩ binaries on PATH, in catalog order. `env` supplies PATH and GENTLE_AI_HOME/HOME.
+ * `withoutBridge` names the catalog ids that start without their bridge (an opencode older than 2.0.0,
+ * src/agents/opencode-version.ts): they are offered with no attention and no resume, like Codex.
  */
-export async function offeredAgents(options: { agentCommand: string; env?: NodeJS.ProcessEnv }): Promise<OfferedAgent[]> {
+export async function offeredAgents(options: { agentCommand: string; env?: NodeJS.ProcessEnv; withoutBridge?: ReadonlySet<string> }): Promise<OfferedAgent[]> {
   const env = options.env ?? process.env;
   const configured = agentFor(options.agentCommand);
+  const limits = (agent: AgentEntry | null): Pick<OfferedAgent, 'attention' | 'resume'> =>
+    agent && options.withoutBridge?.has(agent.id) ? { attention: 'none', resume: false } : { attention: agent?.attention ?? 'none', resume: agent?.resume != null };
   const offered: OfferedAgent[] = [{
     id: configured?.id ?? null,
     label: configured?.label ?? options.agentCommand,
     command: options.agentCommand,
     configured: true,
-    attention: configured?.attention ?? 'none',
-    resume: configured?.resume != null,
+    ...limits(configured),
   }];
   const installed = new Set(await readInstalledAgents(env));
   for (const agent of AGENTS) {
     if (agent === configured || !installed.has(agent.id) || !(await onPath(agent.binary, env.PATH))) continue;
-    offered.push({ id: agent.id, label: agent.label, command: agent.launch.join(' '), configured: false, attention: agent.attention, resume: agent.resume != null });
+    offered.push({ id: agent.id, label: agent.label, command: agent.launch.join(' '), configured: false, ...limits(agent) });
   }
   return offered;
 }

@@ -112,10 +112,15 @@ async function stop(): Promise<void> {
   await exited;
 }
 
-// The fake opencode: records its argv and OPENCODE_CONFIG_CONTENT, and with --standalone loads each
+// The fake opencode: an opencode 2 to the server's `--version` (read once, at the first opencode open), otherwise it
+// records its argv and OPENCODE_CONFIG_CONTENT, and with --standalone loads each
 // configured plugin directory's index.js as opencode 2 does, giving its setup an event stream fed from
 // `$HOME/do-<pane>`.
 const FAKE_OPENCODE = `#!${process.execPath}
+if (process.argv[2] === '--version') {
+  console.log('2.4.2');
+  process.exit(0);
+}
 const { existsSync, readFileSync, unlinkSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');

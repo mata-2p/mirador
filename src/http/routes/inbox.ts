@@ -1,6 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { opencodeBridged, type OpencodeVersion } from '../../agents/opencode-version.ts';
 import { bridgeArgs, bridgeEnvProvider } from '../../attention/agent-args.ts';
 import { prepareAgyHooks } from '../../attention/agy-hooks.ts';
 import { prepareClaudeSettings } from '../../attention/claude-hooks.ts';
@@ -85,21 +86,36 @@ export const inboxRoutes: RouteModule = async (ctx) => {
     ctx.terminals.addEnvProvider(herdrEnvProvider(paths));
     // The bridge tells Mirador when the agent waits; gentle-shell alone only reports its Todo title.
     // Claude Code's bridge is its hooks, in a settings file passed per launch.
-    // opencode's is a plugin, named in its environment and loaded by the private server `--standalone` starts.
+    // opencode's is a plugin, named in its environment and loaded by the private server `--standalone` starts
+    // (added below, once its version is known).
     // agy's is its hooks, in the `.agents/hooks.json` of a workspace folder added per launch with `--add-dir`.
     // kimi has none: its hooks live only in the user's own kimi config and plugins (src/agents/catalog.ts).
     const bridges = {
       pi: BRIDGE,
       'claude-code': await prepareClaudeSettings(paths.dir, CLAUDE_HOOK, process.execPath, { leftOff: ctx.config.leftOff !== false }),
-      opencode: await prepareOpencodePlugin(paths.dir, OPENCODE_PLUGIN),
       antigravity: await prepareAgyHooks(paths.dir, AGY_HOOK),
     };
     ctx.terminals.addAgentArgs(bridgeArgs(ctx.config.agentCommand, bridges, ctx.config.attentionBridge));
-    ctx.terminals.addEnvProvider(bridgeEnvProvider(ctx.config.agentCommand, bridges, ctx.config.attentionBridge));
-    // claude, opencode or agy chosen beside another configured agent gets its bridge too.
+    // claude or agy chosen beside another configured agent gets its bridge too.
     ctx.terminals.addChosenAgentArgs('claude-code', bridgeArgs('claude', bridges, ctx.config.attentionBridge));
-    ctx.terminals.addChosenAgentArgs('opencode', bridgeArgs('opencode', bridges, ctx.config.attentionBridge));
     ctx.terminals.addChosenAgentArgs('antigravity', bridgeArgs('agy', bridges, ctx.config.attentionBridge));
+    // opencode's bridge, configured or chosen, once the server has read `opencode --version` (the first time an
+    // opencode terminal is about to start): an opencode older than 2.0.0 has no `--standalone` and another plugin API,
+    // so it gets none and starts as configured. No opencode terminal starts before this is done
+    // (ctx.whenOpencodeRead); other terminals do not wait.
+    const opencodeBridge = async (version: OpencodeVersion | undefined) => {
+      if (!opencodeBridged(version)) return;
+      try {
+        const opencode = { opencode: await prepareOpencodePlugin(paths.dir, OPENCODE_PLUGIN) };
+        ctx.terminals.addAgentArgs(bridgeArgs(ctx.config.agentCommand, opencode, ctx.config.attentionBridge));
+        ctx.terminals.addEnvProvider(bridgeEnvProvider(ctx.config.agentCommand, opencode, ctx.config.attentionBridge));
+        ctx.terminals.addChosenAgentArgs('opencode', bridgeArgs('opencode', opencode, ctx.config.attentionBridge));
+      } catch (error) {
+        console.error('mirador: the opencode bridge could not be prepared:', error);
+      }
+    };
+    if (ctx.whenOpencodeRead) ctx.whenOpencodeRead(opencodeBridge);
+    else await opencodeBridge(undefined);
   } catch (error) {
     console.error('attention inbox disabled, the herdr socket could not be opened:', error);
   }
